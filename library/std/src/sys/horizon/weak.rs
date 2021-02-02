@@ -92,12 +92,22 @@ impl<F> Weak<F> {
     }
 }
 
+#[cfg(not(target_os = "horizon"))]
 unsafe fn fetch(name: &str) -> usize {
     let name = match CStr::from_bytes_with_nul(name.as_bytes()) {
         Ok(cstr) => cstr,
         Err(..) => return 0,
     };
     libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) as usize
+}
+
+#[cfg(target_os = "horizon")]
+unsafe fn fetch(name: &str) -> usize {
+    let name = match CStr::from_bytes_with_nul(name.as_bytes()) {
+        Ok(cstr) => cstr,
+        Err(..) => return 0,
+    };
+    libc::dlsym(0, name.as_ptr()) as usize
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]

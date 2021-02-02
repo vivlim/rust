@@ -233,6 +233,11 @@ impl StdError for JoinPathsError {
     }
 }
 
+#[cfg(target_os = "horizon")]
+pub fn current_exe() -> io::Result<PathBuf> {
+    unsupported()
+}
+
 #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
 pub fn current_exe() -> io::Result<PathBuf> {
     unsafe {
