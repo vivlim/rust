@@ -22,6 +22,7 @@ pub struct Thread {
 unsafe impl Send for Thread {}
 unsafe impl Sync for Thread {}
 
+#[cfg(not(target_os = "horizon"))]
 impl Thread {
     // unsafe: see thread::Builder::spawn_unchecked for safety requirements
     pub unsafe fn new(stack: usize, p: Box<dyn FnOnce()>) -> io::Result<Thread> {
@@ -184,6 +185,82 @@ impl Thread {
         self.id
     }
 
+    pub fn into_id(self) -> libc::pthread_t {
+        let id = self.id;
+        mem::forget(self);
+        id
+    }
+}
+
+#[cfg(target_os = "horizon")]
+impl Thread {
+
+    // old signature: pub unsafe fn new<'a>(stack: usize, p: Box<FnBox() + 'a>) -> io::Result<Thread> {
+    pub unsafe fn new(stack: usize, p: Box<dyn FnOnce()>) -> io::Result<Thread> {
+        let p = box p;
+        let stack_size = cmp::max(stack, DEFAULT_MIN_STACK_SIZE);
+
+        let mut priority = 0;
+        ::libctru::svcGetThreadPriority(&mut priority, 0xFFFF8000);
+
+        let handle = ::libctru::threadCreate(Some(thread_start), &*p as *const _ as *mut _,
+                                             stack_size, priority, -2, false);
+
+        return if handle == ptr::null_mut() {
+            Err(io::Error::from_raw_os_error(libc::EAGAIN))
+        } else {
+            mem::forget(p); // ownership passed to the new thread
+            Ok(Thread { handle: handle })
+        };
+
+        extern "C" fn thread_start(main: *mut libc::c_void) -> *mut libc::c_void {
+            unsafe {
+                // Next, set up our stack overflow handler which may get triggered if we run
+                // out of stack.
+                let _handler = stack_overflow::Handler::new();
+                // Finally, let's run some code.
+                Box::from_raw(main as *mut Box<dyn FnOnce()>)();
+            }
+            ptr::null_mut()
+        }
+    }
+    
+    pub fn yield_now() {
+        unsafe {
+        ::libctru::svcSleepThread(0)
+        }
+    }
+
+    pub fn set_name(_name: &CStr) {
+        // threads aren't named in libctru
+    }
+
+    pub fn sleep(dur: Duration) {
+        unsafe {
+            let nanos = dur.as_secs()
+                .saturating_mul(1_000_000_000)
+                .saturating_add(dur.subsec_nanos() as u64);
+            ::libctru::svcSleepThread(nanos as i64)
+        }
+    }
+
+    pub fn join(self) {
+        unsafe {
+            let ret = ::libctru::threadJoin(self.handle, u64::max_value());
+            ::libctru::threadFree(self.handle);
+            mem::forget(self);
+            debug_assert_eq!(ret, 0);
+        }
+    }
+
+    #[allow(dead_code)]    
+    // old signature: pub fn id(&self) -> ThreadHandle {
+    pub fn id(&self) -> libc::pthread_t {
+        self.id
+    }
+
+    #[allow(dead_code)]
+    // old signature: pub fn into_id(self) -> ThreadHandle {
     pub fn into_id(self) -> libc::pthread_t {
         let id = self.id;
         mem::forget(self);
@@ -461,7 +538,7 @@ fn min_stack_size(attr: *const libc::pthread_attr_t) -> usize {
 
 // No point in looking up __pthread_get_minstack() on non-glibc
 // platforms.
-#[cfg(all(not(target_os = "linux"), not(target_os = "netbsd")))]
+#[cfg(all(not(target_os = "linux"), not(target_os = "netbsd"), not(target_os = "horizon")))]
 fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
     libc::PTHREAD_STACK_MIN
 }
@@ -469,4 +546,9 @@ fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
 #[cfg(target_os = "netbsd")]
 fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
     2048 // just a guess
+}
+
+#[cfg(target_os = "horizon")]
+fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
+    4096 // just a guess
 }

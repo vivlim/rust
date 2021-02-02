@@ -491,6 +491,7 @@ impl Process {
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct ExitStatus(c_int);
 
+#[cfg(not(target_os = "horizon"))]
 impl ExitStatus {
     pub fn new(status: c_int) -> ExitStatus {
         ExitStatus(status)
@@ -527,6 +528,43 @@ impl ExitStatus {
     pub fn into_raw(&self) -> c_int {
         self.0
     }
+}
+
+#[cfg(target_os = "horizon")]
+impl ExitStatus {
+    fn exited(&self) -> bool {
+        match self.0 {}
+    }
+
+    pub fn success(&self) -> bool {
+        match self.0 {}
+    }
+
+    pub fn code(&self) -> Option<i32> {
+        match self.0 {}
+    }
+
+    /*
+    pub fn signal(&self) -> Option<i32> {
+        match self.0 {}
+    }
+
+    pub fn core_dumped(&self) -> bool {
+        match self.0 {}
+    }
+
+    pub fn stopped_signal(&self) -> Option<i32> {
+        match self.0 {}
+    }
+
+    pub fn continued(&self) -> bool {
+        match self.0 {}
+    }
+
+    pub fn into_raw(&self) -> c_int {
+        self.0
+    }
+    */
 }
 
 /// Converts a raw `c_int` to a type-safe `ExitStatus` by wrapping it without copying.

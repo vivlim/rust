@@ -230,7 +230,8 @@ impl FileDesc {
         target_os = "linux",
         target_os = "haiku",
         target_os = "redox",
-        target_os = "vxworks"
+        target_os = "vxworks",
+        target_os = "horizon"
     )))]
     pub fn set_cloexec(&self) -> io::Result<()> {
         unsafe {
@@ -238,7 +239,7 @@ impl FileDesc {
             Ok(())
         }
     }
-    #[cfg(any(
+    #[cfg(all(any(
         target_env = "newlib",
         target_os = "solaris",
         target_os = "illumos",
@@ -249,7 +250,7 @@ impl FileDesc {
         target_os = "haiku",
         target_os = "redox",
         target_os = "vxworks"
-    ))]
+    ), not(target_os = "horizon")))]
     pub fn set_cloexec(&self) -> io::Result<()> {
         unsafe {
             let previous = cvt(libc::fcntl(self.fd, libc::F_GETFD))?;

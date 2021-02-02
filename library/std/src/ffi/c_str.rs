@@ -476,6 +476,7 @@ impl CString {
     ///     let c_string = CString::from_raw(raw);
     /// }
     /// ```
+    #[cfg(not(target_os = "horizon"))] 
     #[stable(feature = "cstr_memory", since = "1.4.0")]
     pub unsafe fn from_raw(ptr: *mut c_char) -> CString {
         // SAFETY: This is called with a pointer that was obtained from a call
@@ -488,6 +489,13 @@ impl CString {
             let slice = slice::from_raw_parts_mut(ptr, len as usize);
             CString { inner: Box::from_raw(slice as *mut [c_char] as *mut [u8]) }
         }
+    }
+    #[cfg(target_os = "horizon")] 
+    #[stable(feature = "cstr_memory", since = "1.4.0")]
+    pub unsafe fn from_raw(ptr: *mut c_char) -> CString {
+        let len = sys::strlen(ptr as *const u8) + 1; // Including the NUL byte
+        let slice = slice::from_raw_parts_mut(ptr, len as usize);
+        CString { inner: Box::from_raw(slice as *mut [c_char] as *mut [u8]) }
     }
 
     /// Consumes the `CString` and transfers ownership of the string to a C caller.
@@ -1157,6 +1165,7 @@ impl CStr {
     /// }
     /// # }
     /// ```
+    #[cfg(not(target_os = "horizon"))] 
     #[stable(feature = "rust1", since = "1.0.0")]
     pub unsafe fn from_ptr<'a>(ptr: *const c_char) -> &'a CStr {
         // SAFETY: The caller has provided a pointer that points to a valid C
@@ -1174,6 +1183,13 @@ impl CStr {
             let ptr = ptr as *const u8;
             CStr::from_bytes_with_nul_unchecked(slice::from_raw_parts(ptr, len as usize + 1))
         }
+    }
+    #[cfg(target_os = "horizon")] 
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub unsafe fn from_ptr<'a>(ptr: *const c_char) -> &'a CStr {
+        let len = sys::strlen(ptr as *const u8);
+        let ptr = ptr as *const u8;
+        CStr::from_bytes_with_nul_unchecked(slice::from_raw_parts(ptr, len as usize + 1))
     }
 
     /// Creates a C string wrapper from a byte slice.

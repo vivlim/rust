@@ -363,21 +363,51 @@ impl MetadataExt for Metadata {
     fn st_atime(&self) -> i64 {
         self.as_inner().as_inner().st_atime as i64
     }
+
+    #[cfg(not(target_os = "horizon"))]
     fn st_atime_nsec(&self) -> i64 {
         self.as_inner().as_inner().st_atime_nsec as i64
     }
+
+    #[cfg(target_os = "horizon")]
+    fn st_atime_nsec(&self) -> i64 {
+        0i64 // not implemented for horizon
+    }
+
     fn st_mtime(&self) -> i64 {
         self.as_inner().as_inner().st_mtime as i64
     }
+
+    #[cfg(not(target_os = "horizon"))]
     fn st_mtime_nsec(&self) -> i64 {
         self.as_inner().as_inner().st_mtime_nsec as i64
     }
+
+    #[cfg(target_os = "horizon")]
+    fn st_mtime_nsec(&self) -> i64 {
+        0i64 // not implemented for horizon
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     fn st_ctime(&self) -> i64 {
         self.as_inner().as_inner().st_ctime as i64
     }
+
+    #[cfg(target_os = "horizon")]
+    fn st_ctime(&self) -> i64 {
+        0i64 // not implemented for horizon
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     fn st_ctime_nsec(&self) -> i64 {
         self.as_inner().as_inner().st_ctime_nsec as i64
     }
+
+    #[cfg(target_os = "horizon")]
+    fn st_ctime_nsec(&self) -> i64 {
+        0i64 // not implemented for horizon
+    }
+
     fn st_blksize(&self) -> u64 {
         self.as_inner().as_inner().st_blksize as u64
     }
