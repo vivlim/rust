@@ -9,7 +9,7 @@ use crate::sys_common::net::{getsockopt, setsockopt, sockaddr_to_addr};
 use crate::sys_common::{AsInner, FromInner, IntoInner};
 use crate::time::{Duration, Instant};
 
-use libc::{c_int, c_void, size_t, sockaddr, socklen_t, EAI_SYSTEM, MSG_PEEK};
+use libc::{c_int, c_void, size_t, sockaddr, socklen_t, MSG_PEEK};
 
 pub use crate::sys::{cvt, cvt_r};
 
@@ -17,6 +17,8 @@ pub use crate::sys::{cvt, cvt_r};
 pub extern crate libc as netc;
 
 pub type wrlen_t = size_t;
+
+const EAI_SYSTEM: c_int = 0;
 
 pub struct Socket(FileDesc);
 

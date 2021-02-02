@@ -347,6 +347,9 @@ extern crate alloc as alloc_crate;
 #[allow(unused_extern_crates)]
 extern crate libc;
 
+// 3DS-specific dependency
+extern crate ctru_sys as libctru;
+
 // We always need an unwinder currently for backtraces
 #[doc(masked)]
 #[allow(unused_extern_crates)]

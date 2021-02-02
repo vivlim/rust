@@ -1,4 +1,4 @@
-//! Linux-specific raw type definitions.
+//! Horizon-specific raw type definitions.
 
 #![stable(feature = "raw_ext", since = "1.1.0")]
 #![rustc_deprecated(
