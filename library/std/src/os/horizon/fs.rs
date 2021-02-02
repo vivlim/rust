@@ -328,7 +328,7 @@ impl MetadataExt for Metadata {
     #[cfg(target_os = "horizon")]
     #[allow(deprecated)]
     fn as_raw_stat(&self) -> &raw::stat {
-        unsafe { &*(self.as_inner().as_inner() as *const libc::stat64 as *const raw::stat) }
+        unsafe { &*(self.as_inner().as_inner() as *const libc::stat as *const raw::stat) }
     }
 
     #[cfg(not(target_os = "horizon"))]

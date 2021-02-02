@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "horizon"))] // horizon doesn't have unix sockets.
 use super::{sockaddr_un, SocketAddr, UnixStream};
 use crate::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use crate::path::Path;

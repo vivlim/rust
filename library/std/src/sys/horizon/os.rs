@@ -235,7 +235,7 @@ impl StdError for JoinPathsError {
 
 #[cfg(target_os = "horizon")]
 pub fn current_exe() -> io::Result<PathBuf> {
-    unsupported()
+    Err("Not supported on horizon")
 }
 
 #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
@@ -575,6 +575,7 @@ pub fn unsetenv(n: &OsStr) -> io::Result<()> {
     }
 }
 
+#[cfg(not(target_os = "horizon"))]
 pub fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
@@ -597,7 +598,8 @@ pub fn home_dir() -> Option<PathBuf> {
         target_os = "ios",
         target_os = "emscripten",
         target_os = "redox",
-        target_os = "vxworks"
+        target_os = "vxworks",
+        target_os = "horizon",
     ))]
     unsafe fn fallback() -> Option<OsString> {
         None
@@ -607,7 +609,8 @@ pub fn home_dir() -> Option<PathBuf> {
         target_os = "ios",
         target_os = "emscripten",
         target_os = "redox",
-        target_os = "vxworks"
+        target_os = "vxworks",
+        target_os = "horizon",
     )))]
     unsafe fn fallback() -> Option<OsString> {
         let amt = match libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) {

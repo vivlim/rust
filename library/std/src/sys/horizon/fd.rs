@@ -91,6 +91,7 @@ impl FileDesc {
         Ok(ret as usize)
     }
 
+    #[cfg(not(target_os = "horizon"))]
     pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
         let ret = cvt(unsafe {
             libc::readv(
@@ -103,8 +104,15 @@ impl FileDesc {
     }
 
     #[inline]
+    #[cfg(not(target_os = "horizon"))]
     pub fn is_read_vectored(&self) -> bool {
         true
+    }
+
+    #[inline]
+    #[cfg(target_os = "horizon")]
+    pub fn is_read_vectored(&self) -> bool {
+        false // no efficient readv implementation on horizon
     }
 
     pub fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
@@ -148,6 +156,7 @@ impl FileDesc {
         Ok(ret as usize)
     }
 
+    #[cfg(not(target_os = "horizon"))]
     pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
         let ret = cvt(unsafe {
             libc::writev(
@@ -160,8 +169,15 @@ impl FileDesc {
     }
 
     #[inline]
+    #[cfg(not(target_os = "horizon"))]
     pub fn is_write_vectored(&self) -> bool {
         true
+    }
+
+    #[inline]
+    #[cfg(target_os = "horizon")]
+    pub fn is_write_vectored(&self) -> bool {
+        false // no efficient writev on horizon
     }
 
     pub fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
@@ -191,6 +207,12 @@ impl FileDesc {
             )
             .map(|n| n as usize)
         }
+    }
+
+    // We don't have fork/exec on the 3DS, so this shouldn't need to do anything
+    #[cfg(target_os = "horizon")]
+    pub fn set_cloexec(&self) -> io::Result<()> {
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]

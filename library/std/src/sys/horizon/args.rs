@@ -59,6 +59,9 @@ impl DoubleEndedIterator for Args {
 
 #[cfg(target_os = "horizon")]
 mod imp {
+    use super::Args;
+    use crate::marker::PhantomData;
+
     pub unsafe fn init(_argc: isize, _argv: *const *const u8) {
         // Currently null because args aren't implemented yet.
     }

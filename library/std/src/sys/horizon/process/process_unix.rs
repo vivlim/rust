@@ -181,7 +181,7 @@ impl Command {
             cvt_r(|| libc::dup2(fd, libc::STDERR_FILENO))?;
         }
 
-        #[cfg(not(target_os = "l4re"))]
+        #[cfg(not(any(target_os = "l4re", target_os = "horizon")))]
         {
             if let Some(u) = self.get_gid() {
                 cvt(libc::setgid(u as gid_t))?;
@@ -205,7 +205,7 @@ impl Command {
         }
 
         // emscripten has no signal support.
-        #[cfg(not(target_os = "emscripten"))]
+        #[cfg(not(any(target_os = "emscripten", target_os = "horizon")))]
         {
             use crate::mem::MaybeUninit;
             // Reset signal handling so the child process starts in a
@@ -422,6 +422,7 @@ pub struct Process {
     status: Option<ExitStatus>,
 }
 
+#[cfg(not(target_os = "horizon"))]
 impl Process {
     pub fn id(&self) -> u32 {
         self.pid as u32
@@ -464,6 +465,25 @@ impl Process {
             self.status = Some(ExitStatus::new(status));
             Ok(Some(ExitStatus::new(status)))
         }
+    }
+}
+
+#[cfg(target_os = "horizon")]
+impl Process {
+    pub fn id(&self) -> u32 {
+        match self.0 {}
+    }
+
+    pub fn kill(&mut self) -> io::Result<()> {
+        match self.0 {}
+    }
+
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        match self.0 {}
+    }
+
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        match self.0 {}
     }
 }
 

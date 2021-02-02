@@ -2,8 +2,19 @@ use crate::cell::UnsafeCell;
 use crate::sys::mutex::{self, Mutex};
 use crate::time::Duration;
 
+#[cfg(not(target_os = "horizon"))]
 pub struct Condvar {
     inner: UnsafeCell<libc::pthread_cond_t>,
+}
+
+#[cfg(target_os = "horizon")]
+use crate::ptr;
+#[cfg(target_os = "horizon")]
+use crate::intrinsics::atomic_cxchg;
+
+#[cfg(target_os = "horizon")]
+pub struct Condvar {
+    inner: UnsafeCell<*mut ::libctru::LightLock>,
 }
 
 pub type MovableCondvar = Box<Condvar>;
@@ -18,6 +29,7 @@ fn saturating_cast_to_time_t(value: u64) -> libc::time_t {
     if value > <libc::time_t>::MAX as u64 { <libc::time_t>::MAX } else { value as libc::time_t }
 }
 
+#[cfg(not(target_os = "horizon"))]
 impl Condvar {
     pub const fn new() -> Condvar {
         // Might be moved and address is changing it is better to avoid
@@ -172,5 +184,120 @@ impl Condvar {
         // libc::PTHREAD_COND_INITIALIZER. Once it is used or
         // pthread_cond_init() is called, this behaviour no longer occurs.
         debug_assert!(r == 0 || r == libc::EINVAL);
+    }
+}
+
+#[cfg(target_os = "horizon")]
+impl Condvar {
+    pub const fn new() -> Condvar {
+        Condvar {
+            inner: UnsafeCell::new(ptr::null_mut()),
+        }
+    }
+
+    #[inline]
+    pub unsafe fn init(&self) {
+        *self.inner.get() = ptr::null_mut();
+    }
+
+    #[inline]
+    pub fn notify_one(&self) {
+        unsafe {
+            let arbiter = ::libctru::__sync_get_arbiter();
+
+            ::libctru::svcArbitrateAddress(arbiter,
+                                *self.inner.get() as u32,
+                                ::libctru::ARBITRATION_SIGNAL,
+                                1,
+                                0);
+        }
+    }
+
+    #[inline]
+    pub fn notify_all(&self) {
+        unsafe {
+            let lock = self.inner.get();
+
+            if *lock == ptr::null_mut() {
+                return;
+            }
+
+            let arbiter = ::libctru::__sync_get_arbiter();
+
+            ::libctru::svcArbitrateAddress(arbiter,
+                                *self.inner.get() as u32,
+                                ::libctru::ARBITRATION_SIGNAL,
+                                -1,
+                                0);
+        }
+    }
+
+    #[inline]
+    pub fn wait(&self, mutex: &Mutex) {
+        unsafe {
+            let lock = self.inner.get();
+
+            if *lock != mutex::raw(mutex) as *mut i32 {
+                if *lock != ptr::null_mut() {
+                    panic!("Condvar used with more than one Mutex");
+                }
+
+                atomic_cxchg(lock as *mut usize, 0, mutex::raw(mutex) as usize);
+            }
+
+            mutex.unlock();
+
+            let arbiter = ::libctru::__sync_get_arbiter();
+
+            ::libctru::svcArbitrateAddress(arbiter,
+                                *self.inner.get() as u32,
+                                ::libctru::ARBITRATION_WAIT_IF_LESS_THAN,
+                                2,
+                                0);
+
+            mutex.lock();
+        }
+    }
+
+    #[inline]
+    pub fn wait_timeout(&self, mutex: &Mutex, dur: Duration) -> bool {
+        use crate::time::Instant;
+
+        unsafe {
+            let lock = self.inner.get();
+
+            if *lock != mutex::raw(mutex) as *mut i32 {
+                if *lock != ptr::null_mut() {
+                    panic!("Condvar used with more than one Mutex");
+                }
+
+                atomic_cxchg(lock as *mut usize, 0, mutex::raw(mutex) as usize);
+            }
+
+            let now = Instant::now();
+
+            let nanos = dur.as_secs()
+                           .saturating_mul(1_000_000_000)
+                           .saturating_add(dur.subsec_nanos() as u64);
+
+            mutex.unlock();
+
+            let arbiter = ::libctru::__sync_get_arbiter();
+
+            ::libctru::svcArbitrateAddress(arbiter,
+                                *self.inner.get() as u32,
+                                ::libctru::ARBITRATION_WAIT_IF_LESS_THAN_TIMEOUT,
+                                2,
+                                nanos as i64);
+
+            mutex.lock();
+
+            now.elapsed() < dur
+        }
+    }
+
+    #[inline]
+    pub unsafe fn destroy(&self) {
+        *self.inner.get() = ptr::null_mut();
     }
 }

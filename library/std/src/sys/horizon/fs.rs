@@ -1082,7 +1082,7 @@ pub fn link(original: &Path, link: &Path) -> io::Result<()> {
     let original = cstr(original)?;
     let link = cstr(link)?;
     cfg_if::cfg_if! {
-        if #[cfg(any(target_os = "vxworks", target_os = "redox", target_os = "android"))] {
+        if #[cfg(any(target_os = "vxworks", target_os = "redox", target_os = "android", target_os = "horizon"))] {
             // VxWorks, Redox, and old versions of Android lack `linkat`, so use
             // `link` instead. POSIX leaves it implementation-defined whether
             // `link` follows symlinks, so rely on the `symlink_hard_link` test
@@ -1164,6 +1164,32 @@ fn open_from(from: &Path) -> io::Result<(crate::fs::File, crate::fs::Metadata)> 
     Ok((reader, metadata))
 }
 
+#[cfg(target_os = "horizon")]
+fn open_to_and_set_permissions(
+    to: &Path,
+    reader_metadata: crate::fs::Metadata,
+) -> io::Result<(crate::fs::File, crate::fs::Metadata)> {
+    use crate::fs::OpenOptions;
+
+    let perm = reader_metadata.permissions();
+    let writer = OpenOptions::new()
+        // create the file with the correct mode right away
+        .mode(perm.mode())
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(to)?;
+    let writer_metadata = writer.metadata()?;
+    if writer_metadata.is_file() {
+        // Set the correct file permissions, in case the file already existed.
+        // Don't set the permissions on already existing non-files like
+        // pipes/FIFOs or device nodes.
+        writer.set_permissions(perm)?;
+    }
+    Ok((writer, writer_metadata))
+}
+
+#[cfg(not(target_os = "horizon"))]
 fn open_to_and_set_permissions(
     to: &Path,
     reader_metadata: crate::fs::Metadata,
