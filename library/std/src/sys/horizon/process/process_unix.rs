@@ -200,8 +200,12 @@ impl Command {
                 cvt(libc::setuid(u as uid_t))?;
             }
         }
-        if let Some(ref cwd) = *self.get_cwd() {
-            cvt(libc::chdir(cwd.as_ptr()))?;
+
+        #[cfg(not(target_os = "horizon"))]
+        {
+            if let Some(ref cwd) = *self.get_cwd() {
+                cvt(libc::chdir(cwd.as_ptr()))?;
+            }
         }
 
         // emscripten has no signal support.
@@ -249,7 +253,16 @@ impl Command {
             *sys::os::environ() = envp.as_ptr();
         }
 
-        libc::execvp(self.get_program_cstr().as_ptr(), self.get_argv().as_ptr());
+
+        #[cfg(target_os = "horizon")]
+        {
+            libc::execvp(self.get_program_cstr().as_ptr() as *const u8, self.get_argv().as_ptr());
+        }
+
+        #[cfg(not(target_os = "horizon"))]
+        {
+            libc::execvp(self.get_program_cstr().as_ptr(), self.get_argv().as_ptr());
+        }
         Err(io::Error::last_os_error())
     }
 
@@ -471,19 +484,28 @@ impl Process {
 #[cfg(target_os = "horizon")]
 impl Process {
     pub fn id(&self) -> u32 {
-        match self.0 {}
+        self.pid.try_into().unwrap()
     }
 
     pub fn kill(&mut self) -> io::Result<()> {
-        match self.0 {}
+        Err(Error::new(
+            ErrorKind::Other,
+            "kill not implemented on this os",
+        ))
     }
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
-        match self.0 {}
+        Err(Error::new(
+            ErrorKind::Other,
+            "wait not implemented on this os",
+        ))
     }
 
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        match self.0 {}
+        Err(Error::new(
+            ErrorKind::Other,
+            "try_wait not implemented on this os",
+        ))
     }
 }
 
@@ -533,15 +555,15 @@ impl ExitStatus {
 #[cfg(target_os = "horizon")]
 impl ExitStatus {
     fn exited(&self) -> bool {
-        match self.0 {}
+        true
     }
 
     pub fn success(&self) -> bool {
-        match self.0 {}
+        true
     }
 
     pub fn code(&self) -> Option<i32> {
-        match self.0 {}
+        Some(0)
     }
 
     /*
@@ -574,6 +596,15 @@ impl From<c_int> for ExitStatus {
     }
 }
 
+
+#[cfg(target_os = "horizon")]
+impl fmt::Display for ExitStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "formatting ExitStatus not implemented")
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 impl fmt::Display for ExitStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(code) = self.code() {

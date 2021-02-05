@@ -43,6 +43,15 @@ impl AnonPipe {
         self.0.read(buf)
     }
 
+    #[cfg(target_os = "horizon")]
+    pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "read_vectored not implemented on this os",
+        ))
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
         self.0.read_vectored(bufs)
     }
@@ -56,6 +65,15 @@ impl AnonPipe {
         self.0.write(buf)
     }
 
+    #[cfg(target_os = "horizon")]
+    pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "write_vectored not implemented on this os",
+        ))
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
         self.0.write_vectored(bufs)
     }

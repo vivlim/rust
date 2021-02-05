@@ -292,6 +292,13 @@ mod inner {
     pub const UNIX_EPOCH: SystemTime = SystemTime { t: Timespec::zero() };
 
     impl Instant {
+
+        #[cfg(target_os = "horizon")]
+        pub fn now() -> Instant {
+            Instant { t: now(libc::CLOCK_MONOTONIC) }
+        }
+
+        #[cfg(not(target_os = "horizon"))]
         pub fn now() -> Instant {
             Instant { t: now(libc::CLOCK_MONOTONIC) }
         }
@@ -329,6 +336,13 @@ mod inner {
     }
 
     impl SystemTime {
+
+        #[cfg(target_os = "horizon")]
+        pub fn now() -> SystemTime {
+            SystemTime { t: now(libc::CLOCK_REALTIME) }
+        }
+
+        #[cfg(not(target_os = "horizon"))]
         pub fn now() -> SystemTime {
             SystemTime { t: now(libc::CLOCK_REALTIME) }
         }
@@ -361,11 +375,22 @@ mod inner {
         }
     }
 
-    #[cfg(not(target_os = "dragonfly"))]
+    #[cfg(all(not(target_os = "dragonfly"),not(target_os = "horizon")))]
     pub type clock_t = libc::c_int;
     #[cfg(target_os = "dragonfly")]
     pub type clock_t = libc::c_ulong;
+    #[cfg(target_os = "horizon")]
+    pub type clock_t = libc::c_uint;
 
+
+    #[cfg(target_os = "horizon")]
+    fn now(clock: clock_t) -> Timespec {
+        let mut t = Timespec { t: libc::timespec { tv_sec: 0, tv_nsec: 0 } };
+        cvt(unsafe { libc::clock_gettime(clock, &mut t.t) }).unwrap();
+        t
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     fn now(clock: clock_t) -> Timespec {
         let mut t = Timespec { t: libc::timespec { tv_sec: 0, tv_nsec: 0 } };
         cvt(unsafe { libc::clock_gettime(clock, &mut t.t) }).unwrap();

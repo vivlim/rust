@@ -183,6 +183,7 @@ impl TryFrom<&str> for LookupHost {
     }
 }
 
+#[cfg(not(target_os = "horizon"))]
 impl<'a> TryFrom<(&'a str, u16)> for LookupHost {
     type Error = io::Error;
 
@@ -195,6 +196,24 @@ impl<'a> TryFrom<(&'a str, u16)> for LookupHost {
         let mut res = ptr::null_mut();
         unsafe {
             cvt_gai(c::getaddrinfo(c_host.as_ptr(), ptr::null(), &hints, &mut res))
+                .map(|_| LookupHost { original: res, cur: res, port })
+        }
+    }
+}
+
+#[cfg(target_os = "horizon")]
+impl<'a> TryFrom<(&'a str, u16)> for LookupHost {
+    type Error = io::Error;
+
+    fn try_from((host, port): (&'a str, u16)) -> io::Result<LookupHost> {
+        init();
+
+        let c_host = CString::new(host)?;
+        let mut hints: c::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_socktype = c::SOCK_STREAM;
+        let mut res = ptr::null_mut();
+        unsafe {
+            cvt_gai(c::getaddrinfo(c_host.as_ptr() as *const u8, ptr::null(), &hints, &mut res))
                 .map(|_| LookupHost { original: res, cur: res, port })
         }
     }

@@ -36,6 +36,13 @@ pub fn cvt_gai(err: c_int) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
 
+
+    #[cfg(target_os = "horizon")]
+    let detail = unsafe {
+        str::from_utf8(CStr::from_ptr(libc::gai_strerror(err) as *const i8).to_bytes()).unwrap().to_owned()
+    };
+
+    #[cfg(not(target_os = "horizon"))]
     let detail = unsafe {
         str::from_utf8(CStr::from_ptr(libc::gai_strerror(err)).to_bytes()).unwrap().to_owned()
     };
@@ -244,7 +251,10 @@ impl Socket {
     }
 
     pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
-        self.0.read_vectored(bufs)
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "read_vectored not implemented on this os",
+        ))
     }
 
     #[inline]
@@ -300,7 +310,10 @@ impl Socket {
     }
 
     pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
-        self.0.write_vectored(bufs)
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "write_vectored not implemented on this os",
+        ))
     }
 
     #[inline]

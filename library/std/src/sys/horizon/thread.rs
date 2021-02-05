@@ -5,6 +5,11 @@ use crate::mem;
 use crate::ptr;
 use crate::sys::{os, stack_overflow};
 use crate::time::Duration;
+use crate::sys_common;
+
+#[cfg(target_os = "horizon")]
+use libctru::Thread as ThreadHandle;
+
 
 #[cfg(not(any(target_os = "l4re", target_os = "vxworks")))]
 pub const DEFAULT_MIN_STACK_SIZE: usize = 2 * 1024 * 1024;
@@ -13,6 +18,13 @@ pub const DEFAULT_MIN_STACK_SIZE: usize = 1024 * 1024;
 #[cfg(target_os = "vxworks")]
 pub const DEFAULT_MIN_STACK_SIZE: usize = 256 * 1024;
 
+
+#[cfg(target_os = "horizon")]
+pub struct Thread {
+    handle: ThreadHandle,
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub struct Thread {
     id: libc::pthread_t,
 }
@@ -213,15 +225,15 @@ impl Thread {
             Ok(Thread { handle: handle })
         };
 
-        extern "C" fn thread_start(main: *mut libc::c_void) -> *mut libc::c_void {
+        extern "C" fn thread_start(main: *mut libc::c_void) {
             unsafe {
                 // Next, set up our stack overflow handler which may get triggered if we run
                 // out of stack.
                 let _handler = stack_overflow::Handler::new();
+
                 // Finally, let's run some code.
                 Box::from_raw(main as *mut Box<dyn FnOnce()>)();
             }
-            ptr::null_mut()
         }
     }
     
@@ -256,18 +268,28 @@ impl Thread {
     #[allow(dead_code)]    
     // old signature: pub fn id(&self) -> ThreadHandle {
     pub fn id(&self) -> libc::pthread_t {
-        self.id
+        self.id()
     }
 
     #[allow(dead_code)]
     // old signature: pub fn into_id(self) -> ThreadHandle {
     pub fn into_id(self) -> libc::pthread_t {
-        let id = self.id;
+        let id = self.id();
         mem::forget(self);
         id
     }
 }
 
+
+#[cfg(target_os = "horizon")]
+impl Drop for Thread {
+    fn drop(&mut self) {
+        let ret = unsafe { libc::pthread_detach(self.id()) };
+        debug_assert_eq!(ret, 0);
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 impl Drop for Thread {
     fn drop(&mut self) {
         let ret = unsafe { libc::pthread_detach(self.id) };

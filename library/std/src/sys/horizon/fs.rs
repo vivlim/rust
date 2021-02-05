@@ -271,6 +271,29 @@ impl FileAttr {
     }
 }
 
+#[cfg(target_os = "horizon")]
+impl FileAttr {
+    pub fn modified(&self) -> io::Result<SystemTime> {
+        Ok(SystemTime::from(libc::timespec {
+            tv_sec: self.stat.st_mtime as libc::time_t,
+            tv_nsec: 0 as _,
+        }))
+    }
+
+    pub fn accessed(&self) -> io::Result<SystemTime> {
+        Ok(SystemTime::from(libc::timespec {
+            tv_sec: self.stat.st_atime as libc::time_t,
+            tv_nsec: 0 as _,
+        }))
+    }
+
+    pub fn created(&self) -> io::Result<SystemTime> {
+        Err(io::Error::new(io::ErrorKind::Other,
+                           "creation time is not available on this platform \
+                            currently"))
+    }
+}
+
 #[cfg(target_os = "netbsd")]
 impl FileAttr {
     pub fn modified(&self) -> io::Result<SystemTime> {
@@ -295,7 +318,7 @@ impl FileAttr {
     }
 }
 
-#[cfg(not(target_os = "netbsd"))]
+#[cfg(all(not(target_os = "netbsd"), not(target_os = "horizon")))]
 impl FileAttr {
     #[cfg(not(target_os = "vxworks"))]
     pub fn modified(&self) -> io::Result<SystemTime> {
@@ -638,6 +661,12 @@ impl DirEntry {
     fn name_bytes(&self) -> &[u8] {
         unsafe { CStr::from_ptr(self.entry.d_name.as_ptr()).to_bytes() }
     }
+
+    #[cfg(target_os = "horizon")]
+    fn name_bytes(&self) -> &[u8] {
+        unsafe { CStr::from_ptr(self.entry.d_name.as_ptr() as *const i8).to_bytes() }
+    }
+
     #[cfg(any(
         target_os = "solaris",
         target_os = "illumos",
@@ -733,6 +762,7 @@ impl File {
         File::open_c(&path, opts)
     }
 
+    #[cfg(not(target_os = "horizon"))]
     pub fn open_c(path: &CStr, opts: &OpenOptions) -> io::Result<File> {
         let flags = libc::O_CLOEXEC
             | opts.get_access_mode()?
@@ -743,6 +773,20 @@ impl File {
         // However, since this is a variadic function, C integer promotion rules mean that on
         // the ABI level, this still gets passed as `c_int` (aka `u32` on Unix platforms).
         let fd = cvt_r(|| unsafe { open64(path.as_ptr(), flags, opts.mode as c_int) })?;
+        Ok(File(FileDesc::new(fd)))
+    }
+
+    #[cfg(target_os = "horizon")]
+    pub fn open_c(path: &CStr, opts: &OpenOptions) -> io::Result<File> {
+        let flags = libc::O_CLOEXEC
+            | opts.get_access_mode()?
+            | opts.get_creation_mode()?
+            | (opts.custom_flags as c_int & !libc::O_ACCMODE);
+        // The third argument of `open64` is documented to have type `mode_t`. On
+        // some platforms (like macOS, where `open64` is actually `open`), `mode_t` is `u16`.
+        // However, since this is a variadic function, C integer promotion rules mean that on
+        // the ABI level, this still gets passed as `c_int` (aka `u32` on Unix platforms).
+        let fd = cvt_r(|| unsafe { open64(path.as_ptr() as *const u8, flags, opts.mode as c_int) })?;
         Ok(File(FileDesc::new(fd)))
     }
 
@@ -828,8 +872,17 @@ impl File {
         self.0.read(buf)
     }
 
+    #[cfg(not(target_os = "horizon"))]
     pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
         self.0.read_vectored(bufs)
+    }
+
+    #[cfg(target_os = "horizon")]
+    pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+        Err(Error::new(
+            ErrorKind::Other,
+            "read_vectored not implemented on this os",
+        ))
     }
 
     #[inline]
@@ -845,8 +898,17 @@ impl File {
         self.0.write(buf)
     }
 
+    #[cfg(not(target_os = "horizon"))]
     pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
         self.0.write_vectored(bufs)
+    }
+
+    #[cfg(target_os = "horizon")]
+    pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        Err(Error::new(
+            ErrorKind::Other,
+            "write_vectored not implemented on this os",
+        ))
     }
 
     #[inline]
@@ -897,6 +959,15 @@ impl DirBuilder {
         DirBuilder { mode: 0o777 }
     }
 
+
+    #[cfg(target_os = "horizon")]
+    pub fn mkdir(&self, p: &Path) -> io::Result<()> {
+        let p = cstr(p)?;
+        cvt(unsafe { libc::mkdir(p.as_ptr() as *const u8, self.mode) })?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     pub fn mkdir(&self, p: &Path) -> io::Result<()> {
         let p = cstr(p)?;
         cvt(unsafe { libc::mkdir(p.as_ptr(), self.mode) })?;
@@ -996,6 +1067,26 @@ impl fmt::Debug for File {
     }
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn readdir(p: &Path) -> io::Result<ReadDir> {
+    let root = p.to_path_buf();
+    let p = cstr(p)?;
+    unsafe {
+        let ptr = libc::opendir(p.as_ptr() as *const u8);
+        if ptr.is_null() {
+            Err(Error::last_os_error())
+        } else {
+            let inner = InnerReadDir { dirp: Dir(ptr), root };
+            Ok(ReadDir {
+                inner: Arc::new(inner),
+                end_of_stream: false,
+            })
+        }
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn readdir(p: &Path) -> io::Result<ReadDir> {
     let root = p.to_path_buf();
     let p = cstr(p)?;
@@ -1019,12 +1110,31 @@ pub fn readdir(p: &Path) -> io::Result<ReadDir> {
     }
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn unlink(p: &Path) -> io::Result<()> {
+    let p = cstr(p)?;
+    cvt(unsafe { libc::unlink(p.as_ptr() as *const u8) })?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn unlink(p: &Path) -> io::Result<()> {
     let p = cstr(p)?;
     cvt(unsafe { libc::unlink(p.as_ptr()) })?;
     Ok(())
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn rename(old: &Path, new: &Path) -> io::Result<()> {
+    let old = cstr(old)?;
+    let new = cstr(new)?;
+    cvt(unsafe { libc::rename(old.as_ptr() as *const u8, new.as_ptr() as *const u8) })?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn rename(old: &Path, new: &Path) -> io::Result<()> {
     let old = cstr(old)?;
     let new = cstr(new)?;
@@ -1032,12 +1142,30 @@ pub fn rename(old: &Path, new: &Path) -> io::Result<()> {
     Ok(())
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn set_perm(p: &Path, perm: FilePermissions) -> io::Result<()> {
+    let p = cstr(p)?;
+    cvt_r(|| unsafe { libc::chmod(p.as_ptr() as *const u8, perm.mode) })?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn set_perm(p: &Path, perm: FilePermissions) -> io::Result<()> {
     let p = cstr(p)?;
     cvt_r(|| unsafe { libc::chmod(p.as_ptr(), perm.mode) })?;
     Ok(())
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn rmdir(p: &Path) -> io::Result<()> {
+    let p = cstr(p)?;
+    cvt(unsafe { libc::rmdir(p.as_ptr() as *const u8) })?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn rmdir(p: &Path) -> io::Result<()> {
     let p = cstr(p)?;
     cvt(unsafe { libc::rmdir(p.as_ptr()) })?;
@@ -1051,6 +1179,11 @@ pub fn readlink(p: &Path) -> io::Result<PathBuf> {
     let mut buf = Vec::with_capacity(256);
 
     loop {
+        #[cfg(target_os = "horizon")]
+        let buf_read =
+            cvt(unsafe { libc::readlink(p as *const u8, buf.as_mut_ptr() as *mut _, buf.capacity()) })? as usize;
+
+        #[cfg(not(target_os = "horizon"))]
         let buf_read =
             cvt(unsafe { libc::readlink(p, buf.as_mut_ptr() as *mut _, buf.capacity()) })? as usize;
 
@@ -1071,6 +1204,16 @@ pub fn readlink(p: &Path) -> io::Result<PathBuf> {
     }
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn symlink(original: &Path, link: &Path) -> io::Result<()> {
+    let original = cstr(original)?;
+    let link = cstr(link)?;
+    cvt(unsafe { libc::symlink(original.as_ptr() as *const u8, link.as_ptr() as *const u8) })?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn symlink(original: &Path, link: &Path) -> io::Result<()> {
     let original = cstr(original)?;
     let link = cstr(link)?;
@@ -1082,7 +1225,10 @@ pub fn link(original: &Path, link: &Path) -> io::Result<()> {
     let original = cstr(original)?;
     let link = cstr(link)?;
     cfg_if::cfg_if! {
-        if #[cfg(any(target_os = "vxworks", target_os = "redox", target_os = "android", target_os = "horizon"))] {
+        if #[cfg(target_os = "horizon")]{
+            cvt(unsafe { libc::link(original.as_ptr() as *const u8, link.as_ptr() as *const u8) })?;
+        }
+        else if #[cfg(any(target_os = "vxworks", target_os = "redox", target_os = "android"))] {
             // VxWorks, Redox, and old versions of Android lack `linkat`, so use
             // `link` instead. POSIX leaves it implementation-defined whether
             // `link` follows symlinks, so rely on the `symlink_hard_link` test
@@ -1098,6 +1244,28 @@ pub fn link(original: &Path, link: &Path) -> io::Result<()> {
     Ok(())
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn stat(p: &Path) -> io::Result<FileAttr> {
+    let p = cstr(p)?;
+
+    cfg_has_statx! {
+        if let Some(ret) = unsafe { try_statx(
+            libc::AT_FDCWD,
+            p.as_ptr() as *const u8,
+            libc::AT_STATX_SYNC_AS_STAT,
+            libc::STATX_ALL,
+        ) } {
+            return ret;
+        }
+    }
+
+    let mut stat: stat64 = unsafe { mem::zeroed() };
+    cvt(unsafe { stat64(p.as_ptr() as *const u8, &mut stat) })?;
+    Ok(FileAttr::from_stat64(stat))
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn stat(p: &Path) -> io::Result<FileAttr> {
     let p = cstr(p)?;
 
@@ -1117,6 +1285,28 @@ pub fn stat(p: &Path) -> io::Result<FileAttr> {
     Ok(FileAttr::from_stat64(stat))
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn lstat(p: &Path) -> io::Result<FileAttr> {
+    let p = cstr(p)?;
+
+    cfg_has_statx! {
+        if let Some(ret) = unsafe { try_statx(
+            libc::AT_FDCWD,
+            p.as_ptr() as *const u8,
+            libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_SYNC_AS_STAT,
+            libc::STATX_ALL,
+        ) } {
+            return ret;
+        }
+    }
+
+    let mut stat: stat64 = unsafe { mem::zeroed() };
+    cvt(unsafe { lstat64(p.as_ptr() as *const u8, &mut stat) })?;
+    Ok(FileAttr::from_stat64(stat))
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn lstat(p: &Path) -> io::Result<FileAttr> {
     let p = cstr(p)?;
 
@@ -1136,6 +1326,23 @@ pub fn lstat(p: &Path) -> io::Result<FileAttr> {
     Ok(FileAttr::from_stat64(stat))
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn canonicalize(p: &Path) -> io::Result<PathBuf> {
+    let path = CString::new(p.as_os_str().as_bytes())?;
+    let buf;
+    unsafe {
+        let r = libc::realpath(path.as_ptr() as *const u8, ptr::null_mut() as *mut u8);
+        if r.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        buf = CStr::from_ptr(r as *const i8).to_bytes().to_vec();
+        libc::free(r as *mut _);
+    }
+    Ok(PathBuf::from(OsString::from_vec(buf)))
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn canonicalize(p: &Path) -> io::Result<PathBuf> {
     let path = CString::new(p.as_os_str().as_bytes())?;
     let buf;

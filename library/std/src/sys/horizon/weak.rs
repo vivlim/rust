@@ -22,6 +22,7 @@
 #![allow(dead_code, unused_macros)]
 
 use crate::ffi::CStr;
+use crate::os::raw::c_void;
 use crate::marker;
 use crate::mem;
 use crate::sync::atomic::{self, AtomicUsize, Ordering};
@@ -107,7 +108,7 @@ unsafe fn fetch(name: &str) -> usize {
         Ok(cstr) => cstr,
         Err(..) => return 0,
     };
-    libc::dlsym(0, name.as_ptr()) as usize
+    libc::dlsym(0 as *mut c_void, name.as_ptr() as *const u8) as usize
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
