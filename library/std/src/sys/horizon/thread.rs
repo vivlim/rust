@@ -207,7 +207,6 @@ impl Thread {
 #[cfg(target_os = "horizon")]
 impl Thread {
 
-    // old signature: pub unsafe fn new<'a>(stack: usize, p: Box<FnBox() + 'a>) -> io::Result<Thread> {
     pub unsafe fn new(stack: usize, p: Box<dyn FnOnce()>) -> io::Result<Thread> {
         let p = box p;
         let stack_size = cmp::max(stack, DEFAULT_MIN_STACK_SIZE);
@@ -216,7 +215,7 @@ impl Thread {
         ::libctru::svcGetThreadPriority(&mut priority, 0xFFFF8000);
 
         let handle = ::libctru::threadCreate(Some(thread_start), &*p as *const _ as *mut _,
-                                             stack_size, priority, -2, false);
+                                             stack_size as u32, priority, -2, false);
 
         return if handle == ptr::null_mut() {
             Err(io::Error::from_raw_os_error(libc::EAGAIN))

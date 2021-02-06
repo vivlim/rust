@@ -203,13 +203,9 @@ impl Condvar {
     #[inline]
     pub fn notify_one(&self) {
         unsafe {
-            let arbiter = ::libctru::__sync_get_arbiter();
-
-            ::libctru::svcArbitrateAddress(arbiter,
-                                *self.inner.get() as u32,
+            ::libctru::syncArbitrateAddress(*self.inner.get(),
                                 ::libctru::ARBITRATION_SIGNAL,
-                                1,
-                                0);
+                                1);
         }
     }
 
@@ -222,13 +218,9 @@ impl Condvar {
                 return;
             }
 
-            let arbiter = ::libctru::__sync_get_arbiter();
-
-            ::libctru::svcArbitrateAddress(arbiter,
-                                *self.inner.get() as u32,
+            ::libctru::syncArbitrateAddress(*self.inner.get(),
                                 ::libctru::ARBITRATION_SIGNAL,
-                                -1,
-                                0);
+                                -1);
         }
     }
 
@@ -247,13 +239,9 @@ impl Condvar {
 
             mutex.unlock();
 
-            let arbiter = ::libctru::__sync_get_arbiter();
-
-            ::libctru::svcArbitrateAddress(arbiter,
-                                *self.inner.get() as u32,
+            ::libctru::syncArbitrateAddress(*self.inner.get(),
                                 ::libctru::ARBITRATION_WAIT_IF_LESS_THAN,
-                                2,
-                                0);
+                                2);
 
             mutex.lock();
         }
@@ -282,10 +270,7 @@ impl Condvar {
 
             mutex.unlock();
 
-            let arbiter = ::libctru::__sync_get_arbiter();
-
-            ::libctru::svcArbitrateAddress(arbiter,
-                                *self.inner.get() as u32,
+            ::libctru::syncArbitrateAddressWithTimeout(*self.inner.get(),
                                 ::libctru::ARBITRATION_WAIT_IF_LESS_THAN_TIMEOUT,
                                 2,
                                 nanos as i64);
