@@ -51,6 +51,16 @@ impl<T> ReentrantMutex<T> {
     /// This function is unsafe because it is required that `init` is called
     /// once this mutex is in its final resting place, and only then are the
     /// lock/unlock methods safe.
+    #[cfg(target_os = "horizon")] // cannot be const because sys::ReentrantMutex::uninitialized() isn't const on horizon
+    pub unsafe fn new(t: T) -> ReentrantMutex<T> {
+        ReentrantMutex {
+            inner: sys::ReentrantMutex::uninitialized(),
+            data: t,
+            _pinned: PhantomPinned,
+        }
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     pub const unsafe fn new(t: T) -> ReentrantMutex<T> {
         ReentrantMutex {
             inner: sys::ReentrantMutex::uninitialized(),

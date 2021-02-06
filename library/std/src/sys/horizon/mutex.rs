@@ -2,12 +2,28 @@ use crate::cell::UnsafeCell;
 use crate::mem::MaybeUninit;
 use crate::sys::cvt_nz;
 
+#[cfg(target_os = "horizon")]
+use crate::mem; // for mem::uninitialized()
+
+#[cfg(target_os = "horizon")]
+pub struct Mutex {
+    inner: UnsafeCell<::libctru::LightLock>,
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub struct Mutex {
     inner: UnsafeCell<libc::pthread_mutex_t>,
 }
 
 pub type MovableMutex = Box<Mutex>;
 
+#[cfg(target_os = "horizon")]
+#[inline]
+pub unsafe fn raw(m: &Mutex) -> *mut ::libctru::LightLock {
+    m.inner.get()
+}
+
+#[cfg(not(target_os = "horizon"))]
 #[inline]
 pub unsafe fn raw(m: &Mutex) -> *mut libc::pthread_mutex_t {
     m.inner.get()
@@ -17,6 +33,42 @@ unsafe impl Send for Mutex {}
 unsafe impl Sync for Mutex {}
 
 #[allow(dead_code)] // sys isn't exported yet
+#[cfg(target_os = "horizon")]
+impl Mutex {
+    pub const fn new() -> Mutex {
+        Mutex { inner: UnsafeCell::new(0) }
+    }
+
+    #[inline]
+    pub unsafe fn init(&mut self) {
+        ::libctru::LightLock_Init(self.inner.get());
+    }
+
+    #[inline]
+    pub unsafe fn lock(&self) {
+        ::libctru::LightLock_Lock(self.inner.get());
+    }
+
+    #[inline]
+    pub unsafe fn unlock(&self) {
+        ::libctru::LightLock_Unlock(self.inner.get());
+    }
+
+    #[inline]
+    pub unsafe fn try_lock(&self) -> bool {
+        match ::libctru::LightLock_TryLock(self.inner.get()) {
+            0 => false,
+            _ => true,
+        }
+    }
+
+    #[inline]
+    pub unsafe fn destroy(&self) {
+    }
+}
+
+#[allow(dead_code)] // sys isn't exported yet
+#[cfg(not(target_os = "horizon"))]
 impl Mutex {
     pub const fn new() -> Mutex {
         // Might be moved to a different address, so it is better to avoid
@@ -90,6 +142,12 @@ impl Mutex {
     }
 }
 
+#[cfg(target_os = "horizon")]
+pub struct ReentrantMutex {
+    inner: UnsafeCell<::libctru::RecursiveLock>,
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub struct ReentrantMutex {
     inner: UnsafeCell<libc::pthread_mutex_t>,
 }
@@ -97,6 +155,36 @@ pub struct ReentrantMutex {
 unsafe impl Send for ReentrantMutex {}
 unsafe impl Sync for ReentrantMutex {}
 
+#[cfg(target_os = "horizon")]
+impl ReentrantMutex {
+    pub unsafe fn uninitialized() -> ReentrantMutex {
+        ReentrantMutex { inner: mem::uninitialized() }
+    }
+
+    pub unsafe fn init(&mut self) {
+        ::libctru::RecursiveLock_Init(self.inner.get());
+    }
+
+    pub unsafe fn lock(&self) {
+        ::libctru::RecursiveLock_Lock(self.inner.get());
+    }
+
+    #[inline]
+    pub unsafe fn try_lock(&self) -> bool {
+        match ::libctru::RecursiveLock_TryLock(self.inner.get()) {
+            0 => false,
+            _ => true,
+        }
+    }
+
+    pub unsafe fn unlock(&self) {
+        ::libctru::RecursiveLock_Unlock(self.inner.get());
+    }
+
+    pub unsafe fn destroy(&self) {}
+}
+
+#[cfg(not(target_os = "horizon"))]
 impl ReentrantMutex {
     pub const unsafe fn uninitialized() -> ReentrantMutex {
         ReentrantMutex { inner: UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER) }

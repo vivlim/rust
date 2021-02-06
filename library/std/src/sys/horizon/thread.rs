@@ -268,7 +268,7 @@ impl Thread {
     #[allow(dead_code)]    
     // old signature: pub fn id(&self) -> ThreadHandle {
     pub fn id(&self) -> libc::pthread_t {
-        self.id()
+        0
     }
 
     #[allow(dead_code)]

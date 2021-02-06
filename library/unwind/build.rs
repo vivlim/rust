@@ -48,7 +48,11 @@ fn main() {
         println!("cargo:rustc-link-lib=gcc_s");
     } else if target.contains("redox") {
         // redox is handled in lib.rs
+    } else if target.contains("3ds") {
+        println!("cargo:rustc-link-lib=unwind");
+        llvm_libunwind::compile();
     }
+
 }
 
 mod llvm_libunwind {
@@ -70,6 +74,27 @@ mod llvm_libunwind {
         // libunwind expects a __LITTLE_ENDIAN__ macro to be set for LE archs, cf. #65765
         if target_endian_little {
             cfg.define("__LITTLE_ENDIAN__", Some("1"));
+        }
+
+        if target == "3ds" {
+            // Make sure we're using the devkitPro compiler
+            cfg.compiler(env::var("CC_3ds").unwrap());
+
+            cfg.define("_LIBUNWIND_IS_BAREMETAL", None);
+            cfg.define("_LIBUNWIND_HAS_NO_THREADS", None);
+
+            // These flags all came from ctru-rs/examples/.cargo
+            cfg.flag("-specs=3dsx.specs");
+            cfg.flag("-mfloat-abi=hard");
+            cfg.flag("-march=armv6k");
+            cfg.flag("-mtune=mpcore");
+            cfg.flag("-mfpu=vfp");
+            cfg.flag("-mtp=soft");
+            cfg.flag("-z");
+            cfg.flag("muldefs");
+            cfg.flag("-lgcc");
+            cfg.flag("-lsysbase");
+            cfg.flag("-lc");
         }
 
         if target_env == "msvc" {
@@ -154,6 +179,7 @@ mod llvm_libunwind {
             println!("cargo:rustc-link-search=native={}", env::var("OUT_DIR").unwrap());
         }
 
+        //println!("cargo:warning=compiler config {:?}", cfg);
         cfg.compile("unwind");
     }
 }
