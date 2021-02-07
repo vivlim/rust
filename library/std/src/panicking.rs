@@ -23,12 +23,26 @@ use crate::sys_common::rwlock::RWLock;
 use crate::sys_common::{thread_info, util};
 use crate::thread;
 
+#[cfg(target_os = "horizon")]
+use crate::cell::RefCell;
+
+#[cfg(target_os = "horizon")]
+use crate::sys::stdio::Stderr;
+
 #[cfg(not(test))]
 use crate::io::set_output_capture;
 // make sure to use the stderr output configured
 // by libtest in the real copy of std
 #[cfg(test)]
 use realstd::io::set_output_capture;
+
+
+#[cfg(target_os = "horizon")]
+thread_local! {
+    pub static LOCAL_STDERR: RefCell<Option<Box<dyn crate::io::Write + Send>>> = {
+        RefCell::new(None)
+    }
+}
 
 // Binary interface to the panic runtime that the standard library depends on.
 //
@@ -177,6 +191,91 @@ pub fn take_hook() -> Box<dyn Fn(&PanicInfo<'_>) + 'static + Sync + Send> {
     }
 }
 
+#[cfg(target_os = "horizon")]
+fn default_hook(info: &PanicInfo<'_>) {
+
+    // If this is a double panic, make sure that we print a backtrace
+    // for this panic. Otherwise only print it if logging is enabled.
+    let backtrace_env = if panic_count::get() >= 2 {
+        RustBacktrace::Print(crate::backtrace_rs::PrintFmt::Full)
+    } else {
+        backtrace::rust_backtrace_env()
+    };
+
+    // The current implementation always returns `Some`.
+    let location = info.location().unwrap();
+
+    let msg = match info.payload().downcast_ref::<&'static str>() {
+        Some(s) => *s,
+        None => match info.payload().downcast_ref::<String>() {
+            Some(s) => &s[..],
+            None => "Box<Any>",
+        },
+    };
+    let thread = thread_info::current_thread();
+    let name = thread.as_ref().and_then(|t| t.name()).unwrap_or("<unnamed>");
+
+    // 3DS-specific code begins here to display panics via the Error applet
+    let mut err = Stderr::new();
+    use libctru::{errorInit, errorText, errorDisp, errorConf, ERROR_TEXT_WORD_WRAP,
+                  CFG_LANGUAGE_EN, consoleDebugInit, debugDevice_SVC};
+
+    let error_text = format!("thread '{}' panicked at '{}', {}", name, msg, location);
+
+    // for some reason, writing to the debug console (below) doesn't work... call svcOutputDebugString directly as a stopgap.
+    unsafe {libctru::svcOutputDebugString(crate::ffi::CString::new(error_text.clone()).unwrap().as_ptr() as *const u8, error_text.chars().count() as i32);}
+
+    unsafe {
+        // Prepare error message for display
+        let mut error_conf: errorConf = errorConf::default();
+        errorInit(&mut error_conf,
+                  ERROR_TEXT_WORD_WRAP,
+                  CFG_LANGUAGE_EN);
+        errorText(&mut error_conf, error_text.as_ptr() as *const ::libc::c_char);
+
+        // Display the error
+        errorDisp(&mut error_conf);
+    }
+
+    // Let's also write to stderr using the debug console. The output will be
+    // visible in Citra if a custom logging filter such as `Debug.Emulated:Debug`
+    // is enabled in the logging section of `~/.config/citra-emu/sdl2-config.ini`
+    unsafe {
+        consoleDebugInit(debugDevice_SVC);
+    }
+
+    let write = |err: &mut dyn (crate::io::Write)| {
+        let _ = write!(err, "{}", error_text);
+
+        #[cfg(feature = "backtrace")]
+        {
+            use sync::atomic::{AtomicBool, Ordering};
+
+            static FIRST_PANIC: AtomicBool = AtomicBool::new(true);
+
+            if let Some(format) = log_backtrace {
+                let _ = backtrace::print(err, format);
+            } else if FIRST_PANIC.compare_and_swap(true, false, Ordering::SeqCst) {
+                let _ = writeln!(err, "note: Run with `RUST_BACKTRACE=1` for a backtrace.");
+            }
+        }
+    };
+
+    let prev = LOCAL_STDERR.with(|s| s.borrow_mut().take());
+    match (prev, err) {
+       (Some(mut stderr), _) => {
+           write(&mut *stderr);
+           let mut s = Some(stderr);
+           LOCAL_STDERR.with(|slot| {
+               *slot.borrow_mut() = s.take();
+           });
+       }
+       (None, mut err) => { write(&mut err) }
+       _ => {}
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 fn default_hook(info: &PanicInfo<'_>) {
     // If this is a double panic, make sure that we print a backtrace
     // for this panic. Otherwise only print it if logging is enabled.

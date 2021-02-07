@@ -292,6 +292,7 @@
 #![feature(auto_traits)]
 #![feature(or_patterns)]
 #![feature(panic_info_message)]
+#![feature(panic_handler)]
 #![feature(panic_internals)]
 #![feature(panic_unwind)]
 #![feature(pin_static_ref)]

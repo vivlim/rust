@@ -3,9 +3,6 @@ use crate::mem::MaybeUninit;
 use crate::sys::cvt_nz;
 
 #[cfg(target_os = "horizon")]
-use crate::mem; // for mem::uninitialized()
-
-#[cfg(target_os = "horizon")]
 pub struct Mutex {
     inner: UnsafeCell<::libctru::LightLock>,
 }
@@ -158,7 +155,7 @@ unsafe impl Sync for ReentrantMutex {}
 #[cfg(target_os = "horizon")]
 impl ReentrantMutex {
     pub unsafe fn uninitialized() -> ReentrantMutex {
-        ReentrantMutex { inner: mem::uninitialized() }
+        ReentrantMutex { inner: UnsafeCell::new(::libctru::RecursiveLock::default()) }
     }
 
     pub unsafe fn init(&mut self) {

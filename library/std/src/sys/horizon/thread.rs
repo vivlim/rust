@@ -209,13 +209,15 @@ impl Thread {
 
     pub unsafe fn new(stack: usize, p: Box<dyn FnOnce()>) -> io::Result<Thread> {
         let p = box p;
+
+        let p = Box::into_raw(box p);
         let stack_size = cmp::max(stack, DEFAULT_MIN_STACK_SIZE);
 
         let mut priority = 0;
         ::libctru::svcGetThreadPriority(&mut priority, 0xFFFF8000);
 
         let handle = ::libctru::threadCreate(Some(thread_start), &*p as *const _ as *mut _,
-                                             stack_size as u32, priority, -2, false);
+                                             stack_size as u32, priority, -2 /* default cpu */, false);
 
         return if handle == ptr::null_mut() {
             Err(io::Error::from_raw_os_error(libc::EAGAIN))
@@ -260,22 +262,21 @@ impl Thread {
             let ret = ::libctru::threadJoin(self.handle, u64::max_value());
             ::libctru::threadFree(self.handle);
             mem::forget(self);
-            debug_assert_eq!(ret, 0);
+            // debug_assert_eq!(ret, 0);
+            // consider checking if ret is Ok (above line won't work because of changes in libctru)
         }
     }
 
     #[allow(dead_code)]    
-    // old signature: pub fn id(&self) -> ThreadHandle {
-    pub fn id(&self) -> libc::pthread_t {
-        0
+    pub fn id(&self) -> ThreadHandle {
+        self.handle
     }
 
     #[allow(dead_code)]
-    // old signature: pub fn into_id(self) -> ThreadHandle {
-    pub fn into_id(self) -> libc::pthread_t {
-        let id = self.id();
+    pub fn into_id(self) -> ThreadHandle {
+        let handle = self.handle;
         mem::forget(self);
-        id
+        handle
     }
 }
 
@@ -283,8 +284,8 @@ impl Thread {
 #[cfg(target_os = "horizon")]
 impl Drop for Thread {
     fn drop(&mut self) {
-        let ret = unsafe { libc::pthread_detach(self.id()) };
-        debug_assert_eq!(ret, 0);
+        let ret = unsafe { ::libctru::threadDetach(self.id()) };
+        // consider checking if ret is Ok
     }
 }
 
