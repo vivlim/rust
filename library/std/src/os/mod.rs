@@ -71,6 +71,6 @@ pub mod vxworks;
 #[cfg(target_os = "wasi")]
 pub mod wasi;
 #[cfg(target_os = "horizon")]
-pub mod horizon;
+pub mod linux;
 
 pub mod raw;

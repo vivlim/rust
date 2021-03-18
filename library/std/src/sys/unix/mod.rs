@@ -6,7 +6,7 @@ use crate::io::ErrorKind;
 pub use crate::os::linux as platform;
 
 #[cfg(all(not(doc), target_os = "horizon"))]
-pub use crate::os::horizon as platform;
+pub use crate::os::linux as platform;
 #[cfg(all(not(doc), target_os = "android"))]
 pub use crate::os::android as platform;
 #[cfg(all(not(doc), target_os = "dragonfly"))]
