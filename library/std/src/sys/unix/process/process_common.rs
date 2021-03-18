@@ -135,6 +135,28 @@ pub enum Stdio {
 }
 
 impl Command {
+
+    #[cfg(target_os = "horizon")]
+    pub fn new(program: &OsStr) -> Command {
+        let mut saw_nul = false;
+        let program = os2c(program, &mut saw_nul);
+        Command {
+            argv: Argv(vec![program.as_ptr() as *const u8, ptr::null()]),
+            args: vec![program.clone()],
+            program,
+            env: Default::default(),
+            cwd: None,
+            uid: None,
+            gid: None,
+            saw_nul,
+            closures: Vec::new(),
+            stdin: None,
+            stdout: None,
+            stderr: None,
+        }
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     pub fn new(program: &OsStr) -> Command {
         let mut saw_nul = false;
         let program = os2c(program, &mut saw_nul);
@@ -154,6 +176,17 @@ impl Command {
         }
     }
 
+
+    #[cfg(target_os = "horizon")]
+    pub fn set_arg_0(&mut self, arg: &OsStr) {
+        // Set a new arg0
+        let arg = os2c(arg, &mut self.saw_nul);
+        debug_assert!(self.argv.0.len() > 1);
+        self.argv.0[0] = arg.as_ptr() as *const u8;
+        self.args[0] = arg;
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     pub fn set_arg_0(&mut self, arg: &OsStr) {
         // Set a new arg0
         let arg = os2c(arg, &mut self.saw_nul);
@@ -162,6 +195,21 @@ impl Command {
         self.args[0] = arg;
     }
 
+
+    #[cfg(target_os = "horizon")]
+    pub fn arg(&mut self, arg: &OsStr) {
+        // Overwrite the trailing NULL pointer in `argv` and then add a new null
+        // pointer.
+        let arg = os2c(arg, &mut self.saw_nul);
+        self.argv.0[self.args.len()] = arg.as_ptr() as *const u8;
+        self.argv.0.push(ptr::null());
+
+        // Also make sure we keep track of the owned value to schedule a
+        // destructor for this memory.
+        self.args.push(arg);
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     pub fn arg(&mut self, arg: &OsStr) {
         // Overwrite the trailing NULL pointer in `argv` and then add a new null
         // pointer.
@@ -307,12 +355,24 @@ impl CStringArray {
         result.ptrs.push(ptr::null());
         result
     }
+
+
+    #[cfg(target_os = "horizon")]
+    pub fn push(&mut self, item: CString) {
+        let l = self.ptrs.len();
+        self.ptrs[l - 1] = item.as_ptr() as *const u8;
+        self.ptrs.push(ptr::null());
+        self.items.push(item);
+    }
+
+    #[cfg(not(target_os = "horizon"))]
     pub fn push(&mut self, item: CString) {
         let l = self.ptrs.len();
         self.ptrs[l - 1] = item.as_ptr();
         self.ptrs.push(ptr::null());
         self.items.push(item);
     }
+
     pub fn as_ptr(&self) -> *const *const c_char {
         self.ptrs.as_ptr()
     }

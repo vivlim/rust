@@ -32,13 +32,14 @@
 pub mod ffi;
 pub mod fs;
 pub mod io;
+#[cfg(not(target_os = "horizon"))]
 pub mod net;
 pub mod process;
 pub mod raw;
 pub mod thread;
 
 #[unstable(feature = "peer_credentials_unix_socket", issue = "42839", reason = "unstable")]
-#[cfg(any(
+#[cfg(all(any(
     target_os = "android",
     target_os = "linux",
     target_os = "dragonfly",
@@ -46,7 +47,7 @@ pub mod thread;
     target_os = "ios",
     target_os = "macos",
     target_os = "openbsd"
-))]
+), not(target_os = "horizon")))] // no unix extensions on 3ds
 pub mod ucred;
 
 /// A prelude for conveniently writing platform-specific code.

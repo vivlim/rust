@@ -15,6 +15,7 @@ mod libc {
     pub struct sockaddr_un;
 }
 
+#[cfg(not(target_os = "horizon"))] // horizon doesn't have unix sockets.
 fn sun_path_offset(addr: &libc::sockaddr_un) -> usize {
     // Work with an actual instance of the type since using a null pointer is UB
     let base = addr as *const _ as usize;
@@ -22,6 +23,7 @@ fn sun_path_offset(addr: &libc::sockaddr_un) -> usize {
     path - base
 }
 
+#[cfg(not(target_os = "horizon"))] // horizon doesn't have unix sockets.
 pub(super) unsafe fn sockaddr_un(path: &Path) -> io::Result<(libc::sockaddr_un, libc::socklen_t)> {
     let mut addr: libc::sockaddr_un = mem::zeroed();
     addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
@@ -91,11 +93,13 @@ impl<'a> fmt::Display for AsciiEscaped<'a> {
 /// ```
 #[derive(Clone)]
 #[stable(feature = "unix_socket", since = "1.10.0")]
+#[cfg(not(target_os = "horizon"))] // horizon doesn't have unix sockets.
 pub struct SocketAddr {
     addr: libc::sockaddr_un,
     len: libc::socklen_t,
 }
 
+#[cfg(not(target_os = "horizon"))] // horizon doesn't have unix sockets.
 impl SocketAddr {
     pub(super) fn new<F>(f: F) -> io::Result<SocketAddr>
     where
@@ -215,6 +219,7 @@ impl SocketAddr {
 }
 
 #[stable(feature = "unix_socket", since = "1.10.0")]
+#[cfg(not(target_os = "horizon"))] // horizon doesn't have unix sockets.
 impl fmt::Debug for SocketAddr {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.address() {

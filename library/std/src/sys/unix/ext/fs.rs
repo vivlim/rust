@@ -834,8 +834,15 @@ pub trait DirEntryExt {
 
 #[stable(feature = "dir_entry_ext", since = "1.1.0")]
 impl DirEntryExt for fs::DirEntry {
+
+    #[cfg(not(target_os = "horizon"))]
     fn ino(&self) -> u64 {
         self.as_inner().ino()
+    }
+
+    #[cfg(target_os = "horizon")]
+    fn ino(&self) -> u64 {
+        0u64
     }
 }
 

@@ -5,6 +5,8 @@ use crate::io::ErrorKind;
 #[cfg(any(doc, target_os = "linux"))]
 pub use crate::os::linux as platform;
 
+#[cfg(all(not(doc), target_os = "horizon"))]
+pub use crate::os::horizon as platform;
 #[cfg(all(not(doc), target_os = "android"))]
 pub use crate::os::android as platform;
 #[cfg(all(not(doc), target_os = "dragonfly"))]
@@ -77,6 +79,25 @@ pub mod time;
 pub use crate::sys_common::os_str_bytes as os_str;
 
 #[cfg(not(test))]
+#[cfg(target_os = "horizon")]
+pub fn init() {
+    // By default, some platforms will send a *signal* when an EPIPE error
+    // would otherwise be delivered. This runtime doesn't install a SIGPIPE
+    // handler, causing it to kill the program, which isn't exactly what we
+    // want!
+    //
+    // Hence, we set SIGPIPE to ignore when the program starts up in order
+    // to prevent this problem.
+    unsafe {
+        reset_sigpipe();
+    }
+
+    unsafe fn reset_sigpipe() {
+        assert!(signal(0 as _, libc::SIG_IGN) != libc::SIG_ERR);
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn init() {
     // The standard streams might be closed on application startup. To prevent
     // std::io::{stdin, stdout,stderr} objects from using other unrelated file
@@ -152,9 +173,13 @@ pub fn init() {
         }
     }
 
-    #[cfg(not(any(target_os = "emscripten", target_os = "fuchsia")))]
+    #[cfg(not(any(target_os = "emscripten", target_os = "fuchsia", target_os = "horizon")))]
     unsafe fn reset_sigpipe() {
         assert!(signal(libc::SIGPIPE, libc::SIG_IGN) != libc::SIG_ERR);
+    }
+    #[cfg(target_os = "horizon")]
+    unsafe fn reset_sigpipe() {
+        assert!(signal(0 as _, libc::SIG_IGN) != libc::SIG_ERR);
     }
     #[cfg(any(target_os = "emscripten", target_os = "fuchsia"))]
     unsafe fn reset_sigpipe() {}

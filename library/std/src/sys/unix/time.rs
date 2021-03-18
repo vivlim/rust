@@ -271,7 +271,7 @@ mod inner {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "horizon")))]
 mod inner {
     use crate::fmt;
     use crate::sys::cvt;
@@ -292,6 +292,13 @@ mod inner {
     pub const UNIX_EPOCH: SystemTime = SystemTime { t: Timespec::zero() };
 
     impl Instant {
+
+        #[cfg(target_os = "horizon")]
+        pub fn now() -> Instant {
+            Instant { t: now(libc::CLOCK_MONOTONIC) }
+        }
+
+        #[cfg(not(target_os = "horizon"))]
         pub fn now() -> Instant {
             Instant { t: now(libc::CLOCK_MONOTONIC) }
         }
@@ -329,6 +336,13 @@ mod inner {
     }
 
     impl SystemTime {
+
+        #[cfg(target_os = "horizon")]
+        pub fn now() -> SystemTime {
+            SystemTime { t: now(libc::CLOCK_REALTIME) }
+        }
+
+        #[cfg(not(target_os = "horizon"))]
         pub fn now() -> SystemTime {
             SystemTime { t: now(libc::CLOCK_REALTIME) }
         }
@@ -361,14 +375,215 @@ mod inner {
         }
     }
 
-    #[cfg(not(target_os = "dragonfly"))]
+    #[cfg(all(not(target_os = "dragonfly"),not(target_os = "horizon")))]
     pub type clock_t = libc::c_int;
     #[cfg(target_os = "dragonfly")]
     pub type clock_t = libc::c_ulong;
+    #[cfg(target_os = "horizon")]
+    pub type clock_t = libc::c_uint;
 
+
+    #[cfg(target_os = "horizon")]
     fn now(clock: clock_t) -> Timespec {
         let mut t = Timespec { t: libc::timespec { tv_sec: 0, tv_nsec: 0 } };
         cvt(unsafe { libc::clock_gettime(clock, &mut t.t) }).unwrap();
         t
+    }
+
+    #[cfg(not(target_os = "horizon"))]
+    fn now(clock: clock_t) -> Timespec {
+        let mut t = Timespec { t: libc::timespec { tv_sec: 0, tv_nsec: 0 } };
+        cvt(unsafe { libc::clock_gettime(clock, &mut t.t) }).unwrap();
+        t
+    }
+}
+
+#[cfg(target_os = "horizon")]
+mod inner {
+    use crate::fmt;
+    use libc;
+    use crate::sync::Once;
+    use crate::sys::cvt;
+    use crate::sys_common::mul_div_u64;
+    use crate::time::Duration;
+
+    use super::NSEC_PER_SEC;
+    use super::Timespec;
+
+    use libctru;
+
+    #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+    pub struct Instant {
+        t: u64
+    }
+
+    #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct SystemTime {
+        t: Timespec,
+    }
+
+    pub const UNIX_EPOCH: SystemTime = SystemTime {
+        t: Timespec {
+            t: libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            },
+        },
+    };
+
+    fn checked_dur2intervals(dur: &Duration) -> Option<u64> {
+        let nanos =
+            dur.as_secs().checked_mul(NSEC_PER_SEC)?.checked_add(dur.subsec_nanos() as u64)?;
+        let info = info();
+        Some(mul_div_u64(nanos, info.denom as u64, info.numer as u64))
+    }
+
+    impl Instant {
+        pub fn now() -> Instant {
+            Instant { t: ctr_absolute_time() }
+        }
+
+        pub const fn zero() -> Instant {
+            Instant { t: 0 }
+        }
+
+        pub fn sub_instant(&self, other: &Instant) -> Duration {
+            let info = info();
+            let diff = self.t.checked_sub(other.t)
+                           .expect("second instant is later than self");
+            let nanos = mul_div_u64(diff, info.numer as u64, info.denom as u64);
+            Duration::new(nanos / NSEC_PER_SEC, (nanos % NSEC_PER_SEC) as u32)
+        }
+
+        pub fn actually_monotonic() -> bool {
+            true
+        }
+
+        pub fn checked_add_duration(&self, other: &Duration) -> Option<Instant> {
+            Some(Instant { t: self.t.checked_add(checked_dur2intervals(other)?)? })
+        }
+
+        pub fn checked_sub_duration(&self, other: &Duration) -> Option<Instant> {
+            Some(Instant { t: self.t.checked_sub(checked_dur2intervals(other)?)? })
+        }
+
+        pub fn checked_sub_instant(&self, other: &Instant) -> Option<Duration> {
+            let diff = self.t.checked_sub(other.t)?;
+            let info = info();
+            let nanos = mul_div_u64(diff, info.numer as u64, info.denom as u64);
+            Some(Duration::new(nanos / NSEC_PER_SEC, (nanos % NSEC_PER_SEC) as u32))
+        }
+    }
+
+    // The initial system tick after which all Instants occur
+    static mut TICK: u64 = 0;
+
+    // A source of monotonic time based on ticks of the 3DS CPU. Returns the
+    // number of system ticks elapsed since an arbitrary point in the past
+    fn ctr_absolute_time() -> u64 {
+        let first_tick = get_first_tick();
+        let current_tick = get_system_tick();
+        current_tick - first_tick
+    }
+
+    // The first time this function is called, it generates and returns the
+    // initial system tick used to create Instants
+    //
+    // subsequent calls to this function return the previously generated
+    // tick value
+    fn get_first_tick() -> u64 {
+        static ONCE: Once = Once::new();
+        unsafe { 
+            ONCE.call_once(|| {
+                TICK = get_system_tick();
+            });
+            TICK
+        }
+    }
+
+    // Gets the current system tick
+    #[inline]
+    fn get_system_tick() -> u64 {
+        unsafe { libctru::svcGetSystemTick() }
+    }
+
+    // A struct representing the clock speed of the 3DS
+    struct CtrClockInfo {
+        numer: u32,
+        denom: u32,
+    }
+
+    // Initializes the CtrClockInfo struct
+    //
+    // Note that svcGetSystemTick always runs at 268MHz (268,111,856Hz), even
+    // on a New 3DS running in 804MHz mode
+    //
+    // See https://www.3dbrew.org/wiki/Hardware#Common_hardware
+    fn info() -> &'static CtrClockInfo {
+        static INFO: CtrClockInfo = CtrClockInfo {
+            numer: 1_000_000_000,
+            denom: 268_111_856,
+        };
+        &INFO
+    }
+
+    fn dur2intervals(dur: &Duration) -> u64 {
+        let info = info();
+        let nanos = dur.as_secs().checked_mul(NSEC_PER_SEC).and_then(|nanos| {
+            nanos.checked_add(dur.subsec_nanos() as u64)
+        }).expect("overflow converting duration to nanoseconds");
+        mul_div_u64(nanos, info.denom as u64, info.numer as u64)
+    }
+
+    impl SystemTime {
+        pub fn now() -> SystemTime {
+            use crate::ptr;
+
+            let mut s = libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            cvt(unsafe {
+                libc::gettimeofday(&mut s, ptr::null_mut())
+            }).unwrap();
+            return SystemTime::from(s)
+        }
+
+        pub fn sub_time(&self, other: &SystemTime)
+                        -> Result<Duration, Duration> {
+            self.t.sub_timespec(&other.t)
+        }
+
+        pub fn checked_add_duration(&self, other: &Duration) -> Option<SystemTime> {
+            Some(SystemTime { t: self.t.checked_add_duration(other)? })
+        }
+
+        pub fn checked_sub_duration(&self, other: &Duration) -> Option<SystemTime> {
+            Some(SystemTime { t: self.t.checked_sub_duration(other)? })
+        }
+    }
+
+    impl From<libc::timeval> for SystemTime {
+        fn from(t: libc::timeval) -> SystemTime {
+            SystemTime::from(libc::timespec {
+                tv_sec: t.tv_sec,
+                tv_nsec: (t.tv_usec * 1000) as libc::c_long,
+            })
+        }
+    }
+
+    impl From<libc::timespec> for SystemTime {
+        fn from(t: libc::timespec) -> SystemTime {
+            SystemTime { t: Timespec { t: t } }
+        }
+    }
+
+    impl fmt::Debug for SystemTime {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.debug_struct("SystemTime")
+             .field("tv_sec", &self.t.t.tv_sec)
+             .field("tv_nsec", &self.t.t.tv_nsec)
+             .finish()
+        }
     }
 }

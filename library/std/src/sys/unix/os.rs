@@ -73,7 +73,7 @@ pub fn errno() -> i32 {
 }
 
 /// Sets the platform-specific value of errno
-#[cfg(all(not(target_os = "linux"), not(target_os = "dragonfly"), not(target_os = "vxworks")))] // needed for readdir and syscall!
+#[cfg(all(not(target_os = "linux"), not(target_os = "dragonfly"), not(target_os = "vxworks"), not(target_os = "horizon")))] // needed for readdir and syscall!
 #[allow(dead_code)] // but not all target cfgs actually end up using it
 pub fn set_errno(e: i32) {
     unsafe { *errno_location() = e as c_int }
@@ -137,7 +137,13 @@ pub fn getcwd() -> io::Result<PathBuf> {
         unsafe {
             let ptr = buf.as_mut_ptr() as *mut libc::c_char;
             if !libc::getcwd(ptr, buf.capacity()).is_null() {
+
+                #[cfg(target_os = "horizon")]
+                let len = CStr::from_ptr(buf.as_ptr() as *const i8).to_bytes().len();
+
+                #[cfg(not(target_os = "horizon"))]
                 let len = CStr::from_ptr(buf.as_ptr() as *const libc::c_char).to_bytes().len();
+
                 buf.set_len(len);
                 buf.shrink_to_fit();
                 return Ok(PathBuf::from(OsString::from_vec(buf)));
@@ -157,6 +163,20 @@ pub fn getcwd() -> io::Result<PathBuf> {
     }
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn chdir(p: &path::Path) -> io::Result<()> {
+    let p: &OsStr = p.as_ref();
+    let p = CString::new(p.as_bytes())?;
+    unsafe {
+        match libc::chdir(p.as_ptr() as *const u8) == (0 as c_int) {
+            true => Ok(()),
+            false => Err(io::Error::last_os_error()),
+        }
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn chdir(p: &path::Path) -> io::Result<()> {
     let p: &OsStr = p.as_ref();
     let p = CString::new(p.as_bytes())?;
@@ -231,6 +251,14 @@ impl StdError for JoinPathsError {
     fn description(&self) -> &str {
         "failed to join paths"
     }
+}
+
+#[cfg(target_os = "horizon")]
+pub fn current_exe() -> io::Result<PathBuf> {
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        "current_exe not implemented on this os",
+    ))
 }
 
 #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
@@ -508,9 +536,19 @@ pub fn env() -> Env {
         let mut result = Vec::new();
         if !environ.is_null() {
             while !(*environ).is_null() {
-                if let Some(key_value) = parse(CStr::from_ptr(*environ).to_bytes()) {
-                    result.push(key_value);
+
+                #[cfg(target_os = "horizon")] {
+                    if let Some(key_value) = parse(CStr::from_ptr(*environ as *const i8).to_bytes()) {
+                        result.push(key_value);
+                    }
                 }
+
+                #[cfg(not(target_os = "horizon"))] {
+                    if let Some(key_value) = parse(CStr::from_ptr(*environ).to_bytes()) {
+                        result.push(key_value);
+                    }
+                }
+
                 environ = environ.add(1);
             }
         }
@@ -535,6 +573,26 @@ pub fn env() -> Env {
     }
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn getenv(k: &OsStr) -> io::Result<Option<OsString>> {
+    // environment variables with a nul byte can't be set, so their value is
+    // always None as well
+    let k = CString::new(k.as_bytes())?;
+    unsafe {
+        let _guard = env_lock();
+        let s = libc::getenv(k.as_ptr() as *const u8) as *const libc::c_char;
+
+        let ret = if s.is_null() {
+            None
+        } else {
+            Some(OsStringExt::from_vec(CStr::from_ptr(s as *const i8).to_bytes().to_vec()))
+        };
+        Ok(ret)
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn getenv(k: &OsStr) -> io::Result<Option<OsString>> {
     // environment variables with a nul byte can't be set, so their value is
     // always None as well
@@ -542,6 +600,7 @@ pub fn getenv(k: &OsStr) -> io::Result<Option<OsString>> {
     unsafe {
         let _guard = env_lock();
         let s = libc::getenv(k.as_ptr()) as *const libc::c_char;
+
         let ret = if s.is_null() {
             None
         } else {
@@ -551,6 +610,19 @@ pub fn getenv(k: &OsStr) -> io::Result<Option<OsString>> {
     }
 }
 
+
+#[cfg(target_os = "horizon")]
+pub fn setenv(k: &OsStr, v: &OsStr) -> io::Result<()> {
+    let k = CString::new(k.as_bytes())?;
+    let v = CString::new(v.as_bytes())?;
+
+    unsafe {
+        let _guard = env_lock();
+        cvt(libc::setenv(k.as_ptr() as *const u8, v.as_ptr() as *const u8, 1)).map(drop)
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn setenv(k: &OsStr, v: &OsStr) -> io::Result<()> {
     let k = CString::new(k.as_bytes())?;
     let v = CString::new(v.as_bytes())?;
@@ -561,6 +633,17 @@ pub fn setenv(k: &OsStr, v: &OsStr) -> io::Result<()> {
     }
 }
 
+#[cfg(target_os = "horizon")]
+pub fn unsetenv(n: &OsStr) -> io::Result<()> {
+    let nbuf = CString::new(n.as_bytes())?;
+
+    unsafe {
+        let _guard = env_lock();
+        cvt(libc::unsetenv(nbuf.as_ptr() as *const u8)).map(drop)
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub fn unsetenv(n: &OsStr) -> io::Result<()> {
     let nbuf = CString::new(n.as_bytes())?;
 
@@ -570,6 +653,7 @@ pub fn unsetenv(n: &OsStr) -> io::Result<()> {
     }
 }
 
+#[cfg(not(target_os = "horizon"))]
 pub fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
@@ -592,7 +676,8 @@ pub fn home_dir() -> Option<PathBuf> {
         target_os = "ios",
         target_os = "emscripten",
         target_os = "redox",
-        target_os = "vxworks"
+        target_os = "vxworks",
+        target_os = "horizon",
     ))]
     unsafe fn fallback() -> Option<OsString> {
         None
@@ -602,7 +687,8 @@ pub fn home_dir() -> Option<PathBuf> {
         target_os = "ios",
         target_os = "emscripten",
         target_os = "redox",
-        target_os = "vxworks"
+        target_os = "vxworks",
+        target_os = "horizon",
     )))]
     unsafe fn fallback() -> Option<OsString> {
         let amt = match libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) {

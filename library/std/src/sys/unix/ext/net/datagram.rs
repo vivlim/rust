@@ -9,7 +9,9 @@
     target_os = "openbsd",
 ))]
 use super::{recv_vectored_with_ancillary_from, send_vectored_with_ancillary_to, SocketAncillary};
+#[cfg(not(target_os = "horizon"))] // horizon doesn't have unix sockets.
 use super::{sockaddr_un, SocketAddr};
+
 #[cfg(any(
     target_os = "android",
     target_os = "dragonfly",

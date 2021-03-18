@@ -5,6 +5,11 @@ use crate::mem;
 use crate::ptr;
 use crate::sys::{os, stack_overflow};
 use crate::time::Duration;
+use crate::sys_common;
+
+#[cfg(target_os = "horizon")]
+use libctru::Thread as ThreadHandle;
+
 
 #[cfg(not(any(target_os = "l4re", target_os = "vxworks")))]
 pub const DEFAULT_MIN_STACK_SIZE: usize = 2 * 1024 * 1024;
@@ -13,6 +18,13 @@ pub const DEFAULT_MIN_STACK_SIZE: usize = 1024 * 1024;
 #[cfg(target_os = "vxworks")]
 pub const DEFAULT_MIN_STACK_SIZE: usize = 256 * 1024;
 
+
+#[cfg(target_os = "horizon")]
+pub struct Thread {
+    handle: ThreadHandle,
+}
+
+#[cfg(not(target_os = "horizon"))]
 pub struct Thread {
     id: libc::pthread_t,
 }
@@ -22,6 +34,7 @@ pub struct Thread {
 unsafe impl Send for Thread {}
 unsafe impl Sync for Thread {}
 
+#[cfg(not(target_os = "horizon"))]
 impl Thread {
     // unsafe: see thread::Builder::spawn_unchecked for safety requirements
     pub unsafe fn new(stack: usize, p: Box<dyn FnOnce()>) -> io::Result<Thread> {
@@ -191,6 +204,92 @@ impl Thread {
     }
 }
 
+#[cfg(target_os = "horizon")]
+impl Thread {
+
+    pub unsafe fn new(stack: usize, p: Box<dyn FnOnce()>) -> io::Result<Thread> {
+        let p = box p;
+
+        let p = Box::into_raw(box p);
+        let stack_size = cmp::max(stack, DEFAULT_MIN_STACK_SIZE);
+
+        let mut priority = 0;
+        ::libctru::svcGetThreadPriority(&mut priority, 0xFFFF8000);
+
+        let handle = ::libctru::threadCreate(Some(thread_start), &*p as *const _ as *mut _,
+                                             stack_size as u32, priority, -2 /* default cpu */, false);
+
+        return if handle == ptr::null_mut() {
+            Err(io::Error::from_raw_os_error(libc::EAGAIN))
+        } else {
+            mem::forget(p); // ownership passed to the new thread
+            Ok(Thread { handle: handle })
+        };
+
+        extern "C" fn thread_start(main: *mut libc::c_void) {
+            unsafe {
+                // Next, set up our stack overflow handler which may get triggered if we run
+                // out of stack.
+                let _handler = stack_overflow::Handler::new();
+
+                // Finally, let's run some code.
+                Box::from_raw(main as *mut Box<dyn FnOnce()>)();
+            }
+        }
+    }
+    
+    pub fn yield_now() {
+        unsafe {
+        ::libctru::svcSleepThread(0)
+        }
+    }
+
+    pub fn set_name(_name: &CStr) {
+        // threads aren't named in libctru
+    }
+
+    pub fn sleep(dur: Duration) {
+        unsafe {
+            let nanos = dur.as_secs()
+                .saturating_mul(1_000_000_000)
+                .saturating_add(dur.subsec_nanos() as u64);
+            ::libctru::svcSleepThread(nanos as i64)
+        }
+    }
+
+    pub fn join(self) {
+        unsafe {
+            let ret = ::libctru::threadJoin(self.handle, u64::max_value());
+            ::libctru::threadFree(self.handle);
+            mem::forget(self);
+            // debug_assert_eq!(ret, 0);
+            // consider checking if ret is Ok (above line won't work because of changes in libctru)
+        }
+    }
+
+    #[allow(dead_code)]    
+    pub fn id(&self) -> ThreadHandle {
+        self.handle
+    }
+
+    #[allow(dead_code)]
+    pub fn into_id(self) -> ThreadHandle {
+        let handle = self.handle;
+        mem::forget(self);
+        handle
+    }
+}
+
+
+#[cfg(target_os = "horizon")]
+impl Drop for Thread {
+    fn drop(&mut self) {
+        let ret = unsafe { ::libctru::threadDetach(self.id()) };
+        // consider checking if ret is Ok
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 impl Drop for Thread {
     fn drop(&mut self) {
         let ret = unsafe { libc::pthread_detach(self.id) };
@@ -461,7 +560,7 @@ fn min_stack_size(attr: *const libc::pthread_attr_t) -> usize {
 
 // No point in looking up __pthread_get_minstack() on non-glibc
 // platforms.
-#[cfg(all(not(target_os = "linux"), not(target_os = "netbsd")))]
+#[cfg(all(not(target_os = "linux"), not(target_os = "netbsd"), not(target_os = "horizon")))]
 fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
     libc::PTHREAD_STACK_MIN
 }
@@ -469,4 +568,9 @@ fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
 #[cfg(target_os = "netbsd")]
 fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
     2048 // just a guess
+}
+
+#[cfg(target_os = "horizon")]
+fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {
+    4096 // just a guess
 }

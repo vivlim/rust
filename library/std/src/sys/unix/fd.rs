@@ -91,6 +91,7 @@ impl FileDesc {
         Ok(ret as usize)
     }
 
+    #[cfg(not(target_os = "horizon"))]
     pub fn read_vectored(&self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
         let ret = cvt(unsafe {
             libc::readv(
@@ -103,8 +104,15 @@ impl FileDesc {
     }
 
     #[inline]
+    #[cfg(not(target_os = "horizon"))]
     pub fn is_read_vectored(&self) -> bool {
         true
+    }
+
+    #[inline]
+    #[cfg(target_os = "horizon")]
+    pub fn is_read_vectored(&self) -> bool {
+        false // no efficient readv implementation on horizon
     }
 
     pub fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
@@ -148,6 +156,7 @@ impl FileDesc {
         Ok(ret as usize)
     }
 
+    #[cfg(not(target_os = "horizon"))]
     pub fn write_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
         let ret = cvt(unsafe {
             libc::writev(
@@ -160,8 +169,15 @@ impl FileDesc {
     }
 
     #[inline]
+    #[cfg(not(target_os = "horizon"))]
     pub fn is_write_vectored(&self) -> bool {
         true
+    }
+
+    #[inline]
+    #[cfg(target_os = "horizon")]
+    pub fn is_write_vectored(&self) -> bool {
+        false // no efficient writev on horizon
     }
 
     pub fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
@@ -193,6 +209,12 @@ impl FileDesc {
         }
     }
 
+    // We don't have fork/exec on the 3DS, so this shouldn't need to do anything
+    #[cfg(target_os = "horizon")]
+    pub fn set_cloexec(&self) -> io::Result<()> {
+        Ok(())
+    }
+
     #[cfg(target_os = "linux")]
     pub fn get_cloexec(&self) -> io::Result<bool> {
         unsafe { Ok((cvt(libc::fcntl(self.fd, libc::F_GETFD))? & libc::FD_CLOEXEC) != 0) }
@@ -208,7 +230,8 @@ impl FileDesc {
         target_os = "linux",
         target_os = "haiku",
         target_os = "redox",
-        target_os = "vxworks"
+        target_os = "vxworks",
+        target_os = "horizon"
     )))]
     pub fn set_cloexec(&self) -> io::Result<()> {
         unsafe {
@@ -216,7 +239,7 @@ impl FileDesc {
             Ok(())
         }
     }
-    #[cfg(any(
+    #[cfg(all(any(
         target_env = "newlib",
         target_os = "solaris",
         target_os = "illumos",
@@ -227,7 +250,7 @@ impl FileDesc {
         target_os = "haiku",
         target_os = "redox",
         target_os = "vxworks"
-    ))]
+    ), not(target_os = "horizon")))]
     pub fn set_cloexec(&self) -> io::Result<()> {
         unsafe {
             let previous = cvt(libc::fcntl(self.fd, libc::F_GETFD))?;

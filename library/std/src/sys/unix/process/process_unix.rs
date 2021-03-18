@@ -181,7 +181,7 @@ impl Command {
             cvt_r(|| libc::dup2(fd, libc::STDERR_FILENO))?;
         }
 
-        #[cfg(not(target_os = "l4re"))]
+        #[cfg(not(any(target_os = "l4re", target_os = "horizon")))]
         {
             if let Some(u) = self.get_gid() {
                 cvt(libc::setgid(u as gid_t))?;
@@ -200,12 +200,16 @@ impl Command {
                 cvt(libc::setuid(u as uid_t))?;
             }
         }
-        if let Some(ref cwd) = *self.get_cwd() {
-            cvt(libc::chdir(cwd.as_ptr()))?;
+
+        #[cfg(not(target_os = "horizon"))]
+        {
+            if let Some(ref cwd) = *self.get_cwd() {
+                cvt(libc::chdir(cwd.as_ptr()))?;
+            }
         }
 
         // emscripten has no signal support.
-        #[cfg(not(target_os = "emscripten"))]
+        #[cfg(not(any(target_os = "emscripten", target_os = "horizon")))]
         {
             use crate::mem::MaybeUninit;
             // Reset signal handling so the child process starts in a
@@ -249,7 +253,16 @@ impl Command {
             *sys::os::environ() = envp.as_ptr();
         }
 
-        libc::execvp(self.get_program_cstr().as_ptr(), self.get_argv().as_ptr());
+
+        #[cfg(target_os = "horizon")]
+        {
+            libc::execvp(self.get_program_cstr().as_ptr() as *const u8, self.get_argv().as_ptr());
+        }
+
+        #[cfg(not(target_os = "horizon"))]
+        {
+            libc::execvp(self.get_program_cstr().as_ptr(), self.get_argv().as_ptr());
+        }
         Err(io::Error::last_os_error())
     }
 
@@ -422,6 +435,7 @@ pub struct Process {
     status: Option<ExitStatus>,
 }
 
+#[cfg(not(target_os = "horizon"))]
 impl Process {
     pub fn id(&self) -> u32 {
         self.pid as u32
@@ -467,10 +481,39 @@ impl Process {
     }
 }
 
+#[cfg(target_os = "horizon")]
+impl Process {
+    pub fn id(&self) -> u32 {
+        self.pid.try_into().unwrap()
+    }
+
+    pub fn kill(&mut self) -> io::Result<()> {
+        Err(Error::new(
+            ErrorKind::Other,
+            "kill not implemented on this os",
+        ))
+    }
+
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        Err(Error::new(
+            ErrorKind::Other,
+            "wait not implemented on this os",
+        ))
+    }
+
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        Err(Error::new(
+            ErrorKind::Other,
+            "try_wait not implemented on this os",
+        ))
+    }
+}
+
 /// Unix exit statuses
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct ExitStatus(c_int);
 
+#[cfg(not(target_os = "horizon"))]
 impl ExitStatus {
     pub fn new(status: c_int) -> ExitStatus {
         ExitStatus(status)
@@ -509,6 +552,43 @@ impl ExitStatus {
     }
 }
 
+#[cfg(target_os = "horizon")]
+impl ExitStatus {
+    fn exited(&self) -> bool {
+        true
+    }
+
+    pub fn success(&self) -> bool {
+        true
+    }
+
+    pub fn code(&self) -> Option<i32> {
+        Some(0)
+    }
+
+    /*
+    pub fn signal(&self) -> Option<i32> {
+        match self.0 {}
+    }
+
+    pub fn core_dumped(&self) -> bool {
+        match self.0 {}
+    }
+
+    pub fn stopped_signal(&self) -> Option<i32> {
+        match self.0 {}
+    }
+
+    pub fn continued(&self) -> bool {
+        match self.0 {}
+    }
+
+    pub fn into_raw(&self) -> c_int {
+        self.0
+    }
+    */
+}
+
 /// Converts a raw `c_int` to a type-safe `ExitStatus` by wrapping it without copying.
 impl From<c_int> for ExitStatus {
     fn from(a: c_int) -> ExitStatus {
@@ -516,6 +596,15 @@ impl From<c_int> for ExitStatus {
     }
 }
 
+
+#[cfg(target_os = "horizon")]
+impl fmt::Display for ExitStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "formatting ExitStatus not implemented")
+    }
+}
+
+#[cfg(not(target_os = "horizon"))]
 impl fmt::Display for ExitStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(code) = self.code() {

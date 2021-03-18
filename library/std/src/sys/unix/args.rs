@@ -57,6 +57,25 @@ impl DoubleEndedIterator for Args {
     }
 }
 
+#[cfg(target_os = "horizon")]
+mod imp {
+    use super::Args;
+    use crate::marker::PhantomData;
+
+    pub unsafe fn init(_argc: isize, _argv: *const *const u8) {
+        // Currently null because args aren't implemented yet.
+    }
+
+    pub fn cleanup() {}
+
+    pub fn args() -> Args {
+        return Args {
+            iter: Vec::new().into_iter(),
+            _dont_send_or_sync_me: PhantomData,
+        }
+    }
+}
+
 #[cfg(any(
     target_os = "linux",
     target_os = "android",

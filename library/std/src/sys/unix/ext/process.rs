@@ -214,6 +214,7 @@ pub trait ExitStatusExt: private::Sealed {
 impl private::Sealed for process::ExitStatus {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[cfg(not(target_os = "horizon"))]
 impl ExitStatusExt for process::ExitStatus {
     fn from_raw(raw: i32) -> Self {
         process::ExitStatus::from_inner(From::from(raw))
