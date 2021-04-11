@@ -80,6 +80,7 @@ mod llvm_libunwind {
 
             cfg.define("_LIBUNWIND_IS_BAREMETAL", None);
             cfg.define("_LIBUNWIND_HAS_NO_THREADS", None);
+            cfg.define("_LIBUNWIND_REMEMBER_HEAP_ALLOC", None);
 
             // These flags all came from ctru-rs/examples/.cargo
             cfg.flag("-specs=3dsx.specs");
