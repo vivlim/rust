@@ -1,6 +1,7 @@
 use crate::convert::TryInto;
 use crate::fmt;
 use crate::io::{self, Error, ErrorKind};
+use crate::mem;
 use crate::ptr;
 use crate::sys;
 use crate::sys::cvt;
@@ -27,7 +28,10 @@ impl Command {
         let envp = self.capture_env();
 
         if self.saw_nul() {
-            return Err(io::Error::new(ErrorKind::InvalidInput, "nul byte found in provided data"));
+            return Err(io::Error::new_const(
+                ErrorKind::InvalidInput,
+                &"nul byte found in provided data",
+            ));
         }
 
         let (ours, theirs) = self.setup_io(default, needs_stdin)?;
@@ -45,15 +49,14 @@ impl Command {
         //
         // Note that as soon as we're done with the fork there's no need to hold
         // a lock any more because the parent won't do anything and the child is
-        // in its own process.
-        let result = unsafe {
-            let _env_lock = sys::os::env_lock();
-            cvt(libc::fork())?
-        };
+        // in its own process. Thus the parent drops the lock guard while the child
+        // forgets it to avoid unlocking it on a new thread, which would be invalid.
+        let (env_lock, result) = unsafe { (sys::os::env_read_lock(), cvt(libc::fork())?) };
 
         let pid = unsafe {
             match result {
                 0 => {
+                    mem::forget(env_lock);
                     drop(input);
                     let Err(err) = self.do_exec(theirs, envp.as_ref());
                     let errno = err.raw_os_error().unwrap_or(libc::EINVAL) as u32;
@@ -74,7 +77,10 @@ impl Command {
                     rtassert!(output.write(&bytes).is_ok());
                     libc::_exit(1)
                 }
-                n => n,
+                n => {
+                    drop(env_lock);
+                    n
+                }
             }
         };
 
@@ -115,7 +121,10 @@ impl Command {
         let envp = self.capture_env();
 
         if self.saw_nul() {
-            return io::Error::new(ErrorKind::InvalidInput, "nul byte found in provided data");
+            return io::Error::new_const(
+                ErrorKind::InvalidInput,
+                &"nul byte found in provided data",
+            );
         }
 
         match self.setup_io(default, true) {
@@ -124,7 +133,7 @@ impl Command {
                     // Similar to when forking, we want to ensure that access to
                     // the environment is synchronized, so make sure to grab the
                     // environment lock before we try to exec.
-                    let _lock = sys::os::env_lock();
+                    let _lock = sys::os::env_read_lock();
 
                     let Err(e) = self.do_exec(theirs, envp.as_ref());
                     e
@@ -183,20 +192,26 @@ impl Command {
 
         #[cfg(not(target_os = "l4re"))]
         {
+            if let Some(_g) = self.get_groups() {
+                //FIXME: Redox kernel does not support setgroups yet
+                #[cfg(not(target_os = "redox"))]
+                cvt(libc::setgroups(_g.len().try_into().unwrap(), _g.as_ptr()))?;
+            }
             if let Some(u) = self.get_gid() {
                 cvt(libc::setgid(u as gid_t))?;
             }
             if let Some(u) = self.get_uid() {
                 // When dropping privileges from root, the `setgroups` call
-                // will remove any extraneous groups. If we don't call this,
-                // then even though our uid has dropped, we may still have
-                // groups that enable us to do super-user things. This will
-                // fail if we aren't root, so don't bother checking the
-                // return value, this is just done as an optimistic
-                // privilege dropping function.
+                // will remove any extraneous groups. We only drop groups
+                // if the current uid is 0 and we weren't given an explicit
+                // set of groups. If we don't call this, then even though our
+                // uid has dropped, we may still have groups that enable us to
+                // do super-user things.
                 //FIXME: Redox kernel does not support setgroups yet
                 #[cfg(not(target_os = "redox"))]
-                let _ = libc::setgroups(0, ptr::null());
+                if libc::getuid() == 0 && self.get_groups().is_none() {
+                    cvt(libc::setgroups(0, ptr::null()))?;
+                }
                 cvt(libc::setuid(u as uid_t))?;
             }
         }
@@ -287,6 +302,7 @@ impl Command {
             || self.get_uid().is_some()
             || (self.env_saw_path() && !self.program_is_path())
             || !self.get_closures().is_empty()
+            || self.get_groups().is_some()
         {
             return Ok(None);
         }
@@ -397,7 +413,7 @@ impl Command {
             cvt_nz(libc::posix_spawnattr_setflags(attrs.0.as_mut_ptr(), flags as _))?;
 
             // Make sure we synchronize access to the global `environ` resource
-            let _env_lock = sys::os::env_lock();
+            let _env_lock = sys::os::env_read_lock();
             let envp = envp.map(|c| c.as_ptr()).unwrap_or_else(|| *sys::os::environ() as *const _);
             cvt_nz(libc::posix_spawnp(
                 &mut p.pid,
@@ -432,9 +448,9 @@ impl Process {
         // and used for another process, and we probably shouldn't be killing
         // random processes, so just return an error.
         if self.status.is_some() {
-            Err(Error::new(
+            Err(Error::new_const(
                 ErrorKind::InvalidInput,
-                "invalid argument: can't kill an exited process",
+                &"invalid argument: can't kill an exited process",
             ))
         } else {
             cvt(unsafe { libc::kill(self.pid, libc::SIGKILL) }).map(drop)
@@ -520,9 +536,22 @@ impl fmt::Display for ExitStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(code) = self.code() {
             write!(f, "exit code: {}", code)
+        } else if let Some(signal) = self.signal() {
+            if self.core_dumped() {
+                write!(f, "signal: {} (core dumped)", signal)
+            } else {
+                write!(f, "signal: {}", signal)
+            }
+        } else if let Some(signal) = self.stopped_signal() {
+            write!(f, "stopped (not terminated) by signal: {}", signal)
+        } else if self.continued() {
+            write!(f, "continued (WIFCONTINUED)")
         } else {
-            let signal = self.signal().unwrap();
-            write!(f, "signal: {}", signal)
+            write!(f, "unrecognised wait status: {} {:#x}", self.0, self.0)
         }
     }
 }
+
+#[cfg(test)]
+#[path = "process_unix/tests.rs"]
+mod tests;

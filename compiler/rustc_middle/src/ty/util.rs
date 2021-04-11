@@ -34,7 +34,7 @@ impl<'tcx> fmt::Display for Discr<'tcx> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self.ty.kind() {
             ty::Int(ity) => {
-                let size = ty::tls::with(|tcx| Integer::from_attr(&tcx, SignedInt(ity)).size());
+                let size = ty::tls::with(|tcx| Integer::from_int_ty(&tcx, ity).size());
                 let x = self.val;
                 // sign extend the raw representation to be an i128
                 let x = size.sign_extend(x) as i128;
@@ -59,8 +59,8 @@ fn unsigned_max(size: Size) -> u128 {
 
 fn int_size_and_signed<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (Size, bool) {
     let (int, signed) = match *ty.kind() {
-        Int(ity) => (Integer::from_attr(&tcx, SignedInt(ity)), true),
-        Uint(uty) => (Integer::from_attr(&tcx, UnsignedInt(uty)), false),
+        Int(ity) => (Integer::from_int_ty(&tcx, ity), true),
+        Uint(uty) => (Integer::from_uint_ty(&tcx, uty), false),
         _ => bug!("non integer discriminant"),
     };
     (int.size(), signed)
@@ -642,8 +642,8 @@ impl<'tcx> ty::TyS<'tcx> {
             }
             ty::Char => Some(std::char::MAX as u128),
             ty::Float(fty) => Some(match fty {
-                ast::FloatTy::F32 => rustc_apfloat::ieee::Single::INFINITY.to_bits(),
-                ast::FloatTy::F64 => rustc_apfloat::ieee::Double::INFINITY.to_bits(),
+                ty::FloatTy::F32 => rustc_apfloat::ieee::Single::INFINITY.to_bits(),
+                ty::FloatTy::F64 => rustc_apfloat::ieee::Double::INFINITY.to_bits(),
             }),
             _ => None,
         };
@@ -661,8 +661,8 @@ impl<'tcx> ty::TyS<'tcx> {
             }
             ty::Char => Some(0),
             ty::Float(fty) => Some(match fty {
-                ast::FloatTy::F32 => (-::rustc_apfloat::ieee::Single::INFINITY).to_bits(),
-                ast::FloatTy::F64 => (-::rustc_apfloat::ieee::Double::INFINITY).to_bits(),
+                ty::FloatTy::F32 => (-::rustc_apfloat::ieee::Single::INFINITY).to_bits(),
+                ty::FloatTy::F64 => (-::rustc_apfloat::ieee::Double::INFINITY).to_bits(),
             }),
             _ => None,
         };
@@ -726,6 +726,46 @@ impl<'tcx> ty::TyS<'tcx> {
             | ty::FnPtr(_) => true,
             ty::Tuple(_) => self.tuple_fields().all(Self::is_trivially_freeze),
             ty::Slice(elem_ty) | ty::Array(elem_ty, _) => elem_ty.is_trivially_freeze(),
+            ty::Adt(..)
+            | ty::Bound(..)
+            | ty::Closure(..)
+            | ty::Dynamic(..)
+            | ty::Foreign(_)
+            | ty::Generator(..)
+            | ty::GeneratorWitness(_)
+            | ty::Infer(_)
+            | ty::Opaque(..)
+            | ty::Param(_)
+            | ty::Placeholder(_)
+            | ty::Projection(_) => false,
+        }
+    }
+
+    /// Checks whether values of this type `T` implement the `Unpin` trait.
+    pub fn is_unpin(&'tcx self, tcx_at: TyCtxtAt<'tcx>, param_env: ty::ParamEnv<'tcx>) -> bool {
+        self.is_trivially_unpin() || tcx_at.is_unpin_raw(param_env.and(self))
+    }
+
+    /// Fast path helper for testing if a type is `Unpin`.
+    ///
+    /// Returning true means the type is known to be `Unpin`. Returning
+    /// `false` means nothing -- could be `Unpin`, might not be.
+    fn is_trivially_unpin(&self) -> bool {
+        match self.kind() {
+            ty::Int(_)
+            | ty::Uint(_)
+            | ty::Float(_)
+            | ty::Bool
+            | ty::Char
+            | ty::Str
+            | ty::Never
+            | ty::Ref(..)
+            | ty::RawPtr(_)
+            | ty::FnDef(..)
+            | ty::Error(_)
+            | ty::FnPtr(_) => true,
+            ty::Tuple(_) => self.tuple_fields().all(Self::is_trivially_unpin),
+            ty::Slice(elem_ty) | ty::Array(elem_ty, _) => elem_ty.is_trivially_unpin(),
             ty::Adt(..)
             | ty::Bound(..)
             | ty::Closure(..)

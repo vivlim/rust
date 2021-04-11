@@ -7,6 +7,7 @@ use rustc_data_structures::sync::{AtomicU32, AtomicU64, Lock, LockGuard, Lrc, Or
 use rustc_data_structures::unlikely;
 use rustc_errors::Diagnostic;
 use rustc_index::vec::{Idx, IndexVec};
+use rustc_serialize::{Encodable, Encoder};
 
 use parking_lot::{Condvar, Mutex};
 use smallvec::{smallvec, SmallVec};
@@ -21,8 +22,9 @@ use std::sync::atomic::Ordering::Relaxed;
 use super::debug::EdgeFilter;
 use super::prev::PreviousDepGraph;
 use super::query::DepGraphQuery;
-use super::serialized::{SerializedDepGraph, SerializedDepNodeIndex};
-use super::{DepContext, DepKind, DepNode, WorkProductId};
+use super::serialized::SerializedDepNodeIndex;
+use super::{DepContext, DepKind, DepNode, HasDepContext, WorkProductId};
+use crate::query::QueryContext;
 
 #[derive(Clone)]
 pub struct DepGraph<K: DepKind> {
@@ -148,7 +150,7 @@ impl<K: DepKind> DepGraph<K> {
         let mut edge_list_indices = Vec::with_capacity(node_count);
         let mut edge_list_data = Vec::with_capacity(edge_count);
 
-        // See `serialize` for notes on the approach used here.
+        // See `DepGraph`'s `Encodable` implementation for notes on the approach used here.
 
         edge_list_data.extend(data.unshared_edges.iter().map(|i| i.index()));
 
@@ -234,7 +236,7 @@ impl<K: DepKind> DepGraph<K> {
     ///   `arg` parameter.
     ///
     /// [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/incremental-compilation.html
-    pub fn with_task<Ctxt: DepContext<DepKind = K>, A, R>(
+    pub fn with_task<Ctxt: HasDepContext<DepKind = K>, A, R>(
         &self,
         key: DepNode<K>,
         cx: Ctxt,
@@ -260,7 +262,7 @@ impl<K: DepKind> DepGraph<K> {
         )
     }
 
-    fn with_task_impl<Ctxt: DepContext<DepKind = K>, A, R>(
+    fn with_task_impl<Ctxt: HasDepContext<DepKind = K>, A, R>(
         &self,
         key: DepNode<K>,
         cx: Ctxt,
@@ -270,14 +272,15 @@ impl<K: DepKind> DepGraph<K> {
         hash_result: impl FnOnce(&mut Ctxt::StableHashingContext, &R) -> Option<Fingerprint>,
     ) -> (R, DepNodeIndex) {
         if let Some(ref data) = self.data {
+            let dcx = cx.dep_context();
             let task_deps = create_task(key).map(Lock::new);
             let result = K::with_deps(task_deps.as_ref(), || task(cx, arg));
             let edges = task_deps.map_or_else(|| smallvec![], |lock| lock.into_inner().reads);
 
-            let mut hcx = cx.create_stable_hashing_context();
+            let mut hcx = dcx.create_stable_hashing_context();
             let current_fingerprint = hash_result(&mut hcx, &result);
 
-            let print_status = cfg!(debug_assertions) && cx.debug_dep_tasks();
+            let print_status = cfg!(debug_assertions) && dcx.sess().opts.debugging_opts.dep_tasks;
 
             // Intern the new `DepNode`.
             let dep_node_index = if let Some(prev_index) = data.previous.node_to_index_opt(&key) {
@@ -407,7 +410,7 @@ impl<K: DepKind> DepGraph<K> {
 
     /// Executes something within an "eval-always" task which is a task
     /// that runs whenever anything changes.
-    pub fn with_eval_always_task<Ctxt: DepContext<DepKind = K>, A, R>(
+    pub fn with_eval_always_task<Ctxt: HasDepContext<DepKind = K>, A, R>(
         &self,
         key: DepNode<K>,
         cx: Ctxt,
@@ -551,19 +554,6 @@ impl<K: DepKind> DepGraph<K> {
         self.data.as_ref()?.dep_node_debug.borrow().get(&dep_node).cloned()
     }
 
-    pub fn edge_deduplication_data(&self) -> Option<(u64, u64)> {
-        if cfg!(debug_assertions) {
-            let current_dep_graph = &self.data.as_ref().unwrap().current;
-
-            Some((
-                current_dep_graph.total_read_count.load(Relaxed),
-                current_dep_graph.total_duplicate_read_count.load(Relaxed),
-            ))
-        } else {
-            None
-        }
-    }
-
     fn edge_count(&self, node_data: &LockGuard<'_, DepNodeData<K>>) -> usize {
         let data = self.data.as_ref().unwrap();
         let previous = &data.previous;
@@ -577,84 +567,6 @@ impl<K: DepKind> DepGraph<K> {
         }
 
         edge_count
-    }
-
-    pub fn serialize(&self) -> SerializedDepGraph<K> {
-        type SDNI = SerializedDepNodeIndex;
-
-        let data = self.data.as_ref().unwrap();
-        let previous = &data.previous;
-
-        // Note locking order: `prev_index_to_index`, then `data`.
-        let prev_index_to_index = data.current.prev_index_to_index.lock();
-        let data = data.current.data.lock();
-        let node_count = data.hybrid_indices.len();
-        let edge_count = self.edge_count(&data);
-
-        let mut nodes = IndexVec::with_capacity(node_count);
-        let mut fingerprints = IndexVec::with_capacity(node_count);
-        let mut edge_list_indices = IndexVec::with_capacity(node_count);
-        let mut edge_list_data = Vec::with_capacity(edge_count);
-
-        // `rustc_middle::ty::query::OnDiskCache` expects nodes to be in
-        // `DepNodeIndex` order. The edges in `edge_list_data`, on the other
-        // hand, don't need to be in a particular order, as long as each node
-        // can reference its edges as a contiguous range within it. This is why
-        // we're able to copy `unshared_edges` directly into `edge_list_data`.
-        // It meets the above requirements, and each non-dark-green node already
-        // knows the range of edges to reference within it, which they'll push
-        // onto `edge_list_indices`. Dark green nodes, however, don't have their
-        // edges in `unshared_edges`, so need to add them to `edge_list_data`.
-
-        edge_list_data.extend(data.unshared_edges.iter().map(|i| SDNI::new(i.index())));
-
-        for &hybrid_index in data.hybrid_indices.iter() {
-            match hybrid_index.into() {
-                HybridIndex::New(i) => {
-                    let new = &data.new;
-                    nodes.push(new.nodes[i]);
-                    fingerprints.push(new.fingerprints[i]);
-                    let edges = &new.edges[i];
-                    edge_list_indices.push((edges.start.as_u32(), edges.end.as_u32()));
-                }
-                HybridIndex::Red(i) => {
-                    let red = &data.red;
-                    nodes.push(previous.index_to_node(red.node_indices[i]));
-                    fingerprints.push(red.fingerprints[i]);
-                    let edges = &red.edges[i];
-                    edge_list_indices.push((edges.start.as_u32(), edges.end.as_u32()));
-                }
-                HybridIndex::LightGreen(i) => {
-                    let lg = &data.light_green;
-                    nodes.push(previous.index_to_node(lg.node_indices[i]));
-                    fingerprints.push(previous.fingerprint_by_index(lg.node_indices[i]));
-                    let edges = &lg.edges[i];
-                    edge_list_indices.push((edges.start.as_u32(), edges.end.as_u32()));
-                }
-                HybridIndex::DarkGreen(prev_index) => {
-                    nodes.push(previous.index_to_node(prev_index));
-                    fingerprints.push(previous.fingerprint_by_index(prev_index));
-
-                    let edges_iter = previous
-                        .edge_targets_from(prev_index)
-                        .iter()
-                        .map(|&dst| prev_index_to_index[dst].as_ref().unwrap());
-
-                    let start = edge_list_data.len() as u32;
-                    edge_list_data.extend(edges_iter.map(|i| SDNI::new(i.index())));
-                    let end = edge_list_data.len() as u32;
-                    edge_list_indices.push((start, end));
-                }
-            }
-        }
-
-        debug_assert_eq!(nodes.len(), node_count);
-        debug_assert_eq!(fingerprints.len(), node_count);
-        debug_assert_eq!(edge_list_indices.len(), node_count);
-        debug_assert_eq!(edge_list_data.len(), edge_count);
-        debug_assert!(edge_list_data.len() <= u32::MAX as usize);
-
-        SerializedDepGraph { nodes, fingerprints, edge_list_indices, edge_list_data }
     }
 
     pub fn node_color(&self, dep_node: &DepNode<K>) -> Option<DepNodeColor> {
@@ -675,7 +587,7 @@ impl<K: DepKind> DepGraph<K> {
     /// A node will have an index, when it's already been marked green, or when we can mark it
     /// green. This function will mark the current task as a reader of the specified node, when
     /// a node index can be found for that node.
-    pub fn try_mark_green_and_read<Ctxt: DepContext<DepKind = K>>(
+    pub fn try_mark_green_and_read<Ctxt: QueryContext<DepKind = K>>(
         &self,
         tcx: Ctxt,
         dep_node: &DepNode<K>,
@@ -687,7 +599,7 @@ impl<K: DepKind> DepGraph<K> {
         })
     }
 
-    pub fn try_mark_green<Ctxt: DepContext<DepKind = K>>(
+    pub fn try_mark_green<Ctxt: QueryContext<DepKind = K>>(
         &self,
         tcx: Ctxt,
         dep_node: &DepNode<K>,
@@ -715,7 +627,7 @@ impl<K: DepKind> DepGraph<K> {
     }
 
     /// Try to mark a dep-node which existed in the previous compilation session as green.
-    fn try_mark_previous_green<Ctxt: DepContext<DepKind = K>>(
+    fn try_mark_previous_green<Ctxt: QueryContext<DepKind = K>>(
         &self,
         tcx: Ctxt,
         data: &DepGraphData<K>,
@@ -819,7 +731,7 @@ impl<K: DepKind> DepGraph<K> {
                                 return None;
                             }
                             None => {
-                                if !tcx.has_errors_or_delayed_span_bugs() {
+                                if !tcx.dep_context().sess().has_errors_or_delayed_span_bugs() {
                                     panic!(
                                         "try_mark_previous_green() - Forcing the DepNode \
                                           should have set its color"
@@ -899,7 +811,7 @@ impl<K: DepKind> DepGraph<K> {
     /// This may be called concurrently on multiple threads for the same dep node.
     #[cold]
     #[inline(never)]
-    fn emit_diagnostics<Ctxt: DepContext<DepKind = K>>(
+    fn emit_diagnostics<Ctxt: QueryContext<DepKind = K>>(
         &self,
         tcx: Ctxt,
         data: &DepGraphData<K>,
@@ -923,7 +835,7 @@ impl<K: DepKind> DepGraph<K> {
             // Promote the previous diagnostics to the current session.
             tcx.store_diagnostics(dep_node_index, diagnostics.clone().into());
 
-            let handle = tcx.diagnostic();
+            let handle = tcx.dep_context().sess().diagnostic();
 
             for diagnostic in diagnostics {
                 handle.emit_diagnostic(&diagnostic);
@@ -964,7 +876,8 @@ impl<K: DepKind> DepGraph<K> {
     //
     // This method will only load queries that will end up in the disk cache.
     // Other queries will not be executed.
-    pub fn exec_cache_promotions<Ctxt: DepContext<DepKind = K>>(&self, tcx: Ctxt) {
+    pub fn exec_cache_promotions<Ctxt: QueryContext<DepKind = K>>(&self, qcx: Ctxt) {
+        let tcx = qcx.dep_context();
         let _prof_timer = tcx.profiler().generic_activity("incr_comp_query_cache_promotion");
 
         let data = self.data.as_ref().unwrap();
@@ -972,7 +885,7 @@ impl<K: DepKind> DepGraph<K> {
             match data.colors.get(prev_index) {
                 Some(DepNodeColor::Green(_)) => {
                     let dep_node = data.previous.index_to_node(prev_index);
-                    tcx.try_load_from_on_disk_cache(&dep_node);
+                    qcx.try_load_from_on_disk_cache(&dep_node);
                 }
                 None | Some(DepNodeColor::Red) => {
                     // We can skip red nodes because a node can only be marked
@@ -997,9 +910,248 @@ impl<K: DepKind> DepGraph<K> {
         }
     }
 
+    pub fn print_incremental_info(&self) {
+        #[derive(Clone)]
+        struct Stat<Kind: DepKind> {
+            kind: Kind,
+            node_counter: u64,
+            edge_counter: u64,
+        }
+
+        let data = self.data.as_ref().unwrap();
+        let prev = &data.previous;
+        let current = &data.current;
+        let data = current.data.lock();
+
+        let mut stats: FxHashMap<_, Stat<K>> = FxHashMap::with_hasher(Default::default());
+
+        for &hybrid_index in data.hybrid_indices.iter() {
+            let (kind, edge_count) = match hybrid_index.into() {
+                HybridIndex::New(new_index) => {
+                    let kind = data.new.nodes[new_index].kind;
+                    let edge_range = &data.new.edges[new_index];
+                    (kind, edge_range.end.as_usize() - edge_range.start.as_usize())
+                }
+                HybridIndex::Red(red_index) => {
+                    let kind = prev.index_to_node(data.red.node_indices[red_index]).kind;
+                    let edge_range = &data.red.edges[red_index];
+                    (kind, edge_range.end.as_usize() - edge_range.start.as_usize())
+                }
+                HybridIndex::LightGreen(lg_index) => {
+                    let kind = prev.index_to_node(data.light_green.node_indices[lg_index]).kind;
+                    let edge_range = &data.light_green.edges[lg_index];
+                    (kind, edge_range.end.as_usize() - edge_range.start.as_usize())
+                }
+                HybridIndex::DarkGreen(prev_index) => {
+                    let kind = prev.index_to_node(prev_index).kind;
+                    let edge_count = prev.edge_targets_from(prev_index).len();
+                    (kind, edge_count)
+                }
+            };
+
+            let stat = stats.entry(kind).or_insert(Stat { kind, node_counter: 0, edge_counter: 0 });
+            stat.node_counter += 1;
+            stat.edge_counter += edge_count as u64;
+        }
+
+        let total_node_count = data.hybrid_indices.len();
+        let total_edge_count = self.edge_count(&data);
+
+        // Drop the lock guard.
+        std::mem::drop(data);
+
+        let mut stats: Vec<_> = stats.values().cloned().collect();
+        stats.sort_by_key(|s| -(s.node_counter as i64));
+
+        const SEPARATOR: &str = "[incremental] --------------------------------\
+                                 ----------------------------------------------\
+                                 ------------";
+
+        eprintln!("[incremental]");
+        eprintln!("[incremental] DepGraph Statistics");
+        eprintln!("{}", SEPARATOR);
+        eprintln!("[incremental]");
+        eprintln!("[incremental] Total Node Count: {}", total_node_count);
+        eprintln!("[incremental] Total Edge Count: {}", total_edge_count);
+
+        if cfg!(debug_assertions) {
+            let total_edge_reads = current.total_read_count.load(Relaxed);
+            let total_duplicate_edge_reads = current.total_duplicate_read_count.load(Relaxed);
+
+            eprintln!("[incremental] Total Edge Reads: {}", total_edge_reads);
+            eprintln!("[incremental] Total Duplicate Edge Reads: {}", total_duplicate_edge_reads);
+        }
+
+        eprintln!("[incremental]");
+
+        eprintln!(
+            "[incremental]  {:<36}| {:<17}| {:<12}| {:<17}|",
+            "Node Kind", "Node Frequency", "Node Count", "Avg. Edge Count"
+        );
+
+        eprintln!(
+            "[incremental] -------------------------------------\
+                  |------------------\
+                  |-------------\
+                  |------------------|"
+        );
+
+        for stat in stats {
+            let node_kind_ratio = (100.0 * (stat.node_counter as f64)) / (total_node_count as f64);
+            let node_kind_avg_edges = (stat.edge_counter as f64) / (stat.node_counter as f64);
+
+            eprintln!(
+                "[incremental]  {:<36}|{:>16.1}% |{:>12} |{:>17.1} |",
+                format!("{:?}", stat.kind),
+                node_kind_ratio,
+                stat.node_counter,
+                node_kind_avg_edges,
+            );
+        }
+
+        eprintln!("{}", SEPARATOR);
+        eprintln!("[incremental]");
+    }
+
     fn next_virtual_depnode_index(&self) -> DepNodeIndex {
         let index = self.virtual_dep_node_index.fetch_add(1, Relaxed);
         DepNodeIndex::from_u32(index)
+    }
+}
+
+impl<E: Encoder, K: DepKind + Encodable<E>> Encodable<E> for DepGraph<K> {
+    fn encode(&self, e: &mut E) -> Result<(), E::Error> {
+        // We used to serialize the dep graph by creating and serializing a `SerializedDepGraph`
+        // using data copied from the `DepGraph`. But copying created a large memory spike, so we
+        // now serialize directly from the `DepGraph` as if it's a `SerializedDepGraph`. Because we
+        // deserialize that data into a `SerializedDepGraph` in the next compilation session, we
+        // need `DepGraph`'s `Encodable` and `SerializedDepGraph`'s `Decodable` implementations to
+        // be in sync. If you update this encoding, be sure to update the decoding, and vice-versa.
+
+        let data = self.data.as_ref().unwrap();
+        let prev = &data.previous;
+
+        // Note locking order: `prev_index_to_index`, then `data`.
+        let prev_index_to_index = data.current.prev_index_to_index.lock();
+        let data = data.current.data.lock();
+        let new = &data.new;
+        let red = &data.red;
+        let lg = &data.light_green;
+
+        let node_count = data.hybrid_indices.len();
+        let edge_count = self.edge_count(&data);
+
+        // `rustc_middle::ty::query::OnDiskCache` expects nodes to be encoded in `DepNodeIndex`
+        // order. The edges in `edge_list_data` don't need to be in a particular order, as long as
+        // each node references its edges as a contiguous range within it. Therefore, we can encode
+        // `edge_list_data` directly from `unshared_edges`. It meets the above requirements, as
+        // each non-dark-green node already knows the range of edges to reference within it, which
+        // they'll encode in `edge_list_indices`. Dark green nodes, however, don't have their edges
+        // in `unshared_edges`, so need to add them to `edge_list_data`.
+
+        use HybridIndex::*;
+
+        // Encoded values (nodes, etc.) are explicitly typed below to avoid inadvertently
+        // serializing data in the wrong format (i.e. one incompatible with `SerializedDepGraph`).
+        e.emit_struct("SerializedDepGraph", 4, |e| {
+            e.emit_struct_field("nodes", 0, |e| {
+                // `SerializedDepGraph` expects this to be encoded as a sequence of `DepNode`s.
+                e.emit_seq(node_count, |e| {
+                    for (seq_index, &hybrid_index) in data.hybrid_indices.iter().enumerate() {
+                        let node: DepNode<K> = match hybrid_index.into() {
+                            New(i) => new.nodes[i],
+                            Red(i) => prev.index_to_node(red.node_indices[i]),
+                            LightGreen(i) => prev.index_to_node(lg.node_indices[i]),
+                            DarkGreen(prev_index) => prev.index_to_node(prev_index),
+                        };
+
+                        e.emit_seq_elt(seq_index, |e| node.encode(e))?;
+                    }
+
+                    Ok(())
+                })
+            })?;
+
+            e.emit_struct_field("fingerprints", 1, |e| {
+                // `SerializedDepGraph` expects this to be encoded as a sequence of `Fingerprints`s.
+                e.emit_seq(node_count, |e| {
+                    for (seq_index, &hybrid_index) in data.hybrid_indices.iter().enumerate() {
+                        let fingerprint: Fingerprint = match hybrid_index.into() {
+                            New(i) => new.fingerprints[i],
+                            Red(i) => red.fingerprints[i],
+                            LightGreen(i) => prev.fingerprint_by_index(lg.node_indices[i]),
+                            DarkGreen(prev_index) => prev.fingerprint_by_index(prev_index),
+                        };
+
+                        e.emit_seq_elt(seq_index, |e| fingerprint.encode(e))?;
+                    }
+
+                    Ok(())
+                })
+            })?;
+
+            e.emit_struct_field("edge_list_indices", 2, |e| {
+                // `SerializedDepGraph` expects this to be encoded as a sequence of `(u32, u32)`s.
+                e.emit_seq(node_count, |e| {
+                    // Dark green node edges start after the unshared (all other nodes') edges.
+                    let mut dark_green_edge_index = data.unshared_edges.len();
+
+                    for (seq_index, &hybrid_index) in data.hybrid_indices.iter().enumerate() {
+                        let edge_indices: (u32, u32) = match hybrid_index.into() {
+                            New(i) => (new.edges[i].start.as_u32(), new.edges[i].end.as_u32()),
+                            Red(i) => (red.edges[i].start.as_u32(), red.edges[i].end.as_u32()),
+                            LightGreen(i) => (lg.edges[i].start.as_u32(), lg.edges[i].end.as_u32()),
+                            DarkGreen(prev_index) => {
+                                let edge_count = prev.edge_targets_from(prev_index).len();
+                                let start = dark_green_edge_index as u32;
+                                dark_green_edge_index += edge_count;
+                                let end = dark_green_edge_index as u32;
+                                (start, end)
+                            }
+                        };
+
+                        e.emit_seq_elt(seq_index, |e| edge_indices.encode(e))?;
+                    }
+
+                    assert_eq!(dark_green_edge_index, edge_count);
+
+                    Ok(())
+                })
+            })?;
+
+            e.emit_struct_field("edge_list_data", 3, |e| {
+                // `SerializedDepGraph` expects this to be encoded as a sequence of
+                // `SerializedDepNodeIndex`.
+                e.emit_seq(edge_count, |e| {
+                    for (seq_index, &edge) in data.unshared_edges.iter().enumerate() {
+                        let serialized_edge = SerializedDepNodeIndex::new(edge.index());
+                        e.emit_seq_elt(seq_index, |e| serialized_edge.encode(e))?;
+                    }
+
+                    let mut seq_index = data.unshared_edges.len();
+
+                    for &hybrid_index in data.hybrid_indices.iter() {
+                        if let DarkGreen(prev_index) = hybrid_index.into() {
+                            for &edge in prev.edge_targets_from(prev_index) {
+                                // Dark green node edges are stored in the previous graph
+                                // and must be converted to edges in the current graph,
+                                // and then serialized as `SerializedDepNodeIndex`.
+                                let serialized_edge = SerializedDepNodeIndex::new(
+                                    prev_index_to_index[edge].as_ref().unwrap().index(),
+                                );
+
+                                e.emit_seq_elt(seq_index, |e| serialized_edge.encode(e))?;
+                                seq_index += 1;
+                            }
+                        }
+                    }
+
+                    assert_eq!(seq_index, edge_count);
+
+                    Ok(())
+                })
+            })
+        })
     }
 }
 

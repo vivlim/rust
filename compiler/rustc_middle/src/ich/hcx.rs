@@ -17,6 +17,7 @@ use rustc_span::{BytePos, CachingSourceMapView, SourceFile, SpanData};
 use rustc_span::def_id::{CrateNum, CRATE_DEF_INDEX};
 use smallvec::SmallVec;
 use std::cmp::Ord;
+use std::thread::LocalKey;
 
 fn compute_ignored_attr_names() -> FxHashSet<Symbol> {
     debug_assert!(!ich::IGNORED_ATTRIBUTES.is_empty());
@@ -242,11 +243,11 @@ impl<'a> rustc_span::HashStableContext for StableHashingContext<'a> {
         hcx.def_path_hash(def_id).hash_stable(hcx, hasher);
     }
 
-    fn byte_pos_to_line_and_col(
-        &mut self,
-        byte: BytePos,
-    ) -> Option<(Lrc<SourceFile>, usize, BytePos)> {
-        self.source_map().byte_pos_to_line_and_col(byte)
+    fn expn_id_cache() -> &'static LocalKey<rustc_span::ExpnIdCache> {
+        thread_local! {
+            static CACHE: rustc_span::ExpnIdCache = Default::default();
+        }
+        &CACHE
     }
 
     fn span_data_to_lines_and_cols(

@@ -127,14 +127,10 @@ where
 }
 
 pub trait CreateTokenStream: sync::Send + sync::Sync {
-    fn add_trailing_semi(&self) -> Box<dyn CreateTokenStream>;
     fn create_token_stream(&self) -> TokenStream;
 }
 
 impl CreateTokenStream for TokenStream {
-    fn add_trailing_semi(&self) -> Box<dyn CreateTokenStream> {
-        panic!("Cannot call `add_trailing_semi` on a `TokenStream`!");
-    }
     fn create_token_stream(&self) -> TokenStream {
         self.clone()
     }
@@ -149,13 +145,6 @@ pub struct LazyTokenStream(Lrc<Box<dyn CreateTokenStream>>);
 impl LazyTokenStream {
     pub fn new(inner: impl CreateTokenStream + 'static) -> LazyTokenStream {
         LazyTokenStream(Lrc::new(Box::new(inner)))
-    }
-
-    /// Extends the captured stream by one token,
-    /// which must be a trailing semicolon. This
-    /// affects the `TokenStream` created by `make_tokenstream`.
-    pub fn add_trailing_semi(&self) -> LazyTokenStream {
-        LazyTokenStream(Lrc::new(self.0.add_trailing_semi()))
     }
 
     pub fn create_token_stream(&self) -> TokenStream {
@@ -200,7 +189,7 @@ pub struct TokenStream(pub(crate) Lrc<Vec<TreeAndSpacing>>);
 pub type TreeAndSpacing = (TokenTree, Spacing);
 
 // `TokenStream` is used a lot. Make sure it doesn't unintentionally get bigger.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
 rustc_data_structures::static_assert_size!(TokenStream, 8);
 
 #[derive(Clone, Copy, Debug, PartialEq, Encodable, Decodable)]

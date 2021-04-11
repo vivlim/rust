@@ -513,7 +513,7 @@ macro_rules! int_impl {
         #[doc = concat!("assert_eq!((1", stringify!($SelfT), ").checked_div(0), None);")]
         /// ```
         #[stable(feature = "rust1", since = "1.0.0")]
-        #[rustc_const_unstable(feature = "const_checked_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_checked_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -539,7 +539,7 @@ macro_rules! int_impl {
         #[doc = concat!("assert_eq!((1", stringify!($SelfT), ").checked_div_euclid(0), None);")]
         /// ```
         #[stable(feature = "euclidean_division", since = "1.38.0")]
-        #[rustc_const_unstable(feature = "const_euclidean_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -565,7 +565,7 @@ macro_rules! int_impl {
         #[doc = concat!("assert_eq!(", stringify!($SelfT), "::MIN.checked_rem(-1), None);")]
         /// ```
         #[stable(feature = "wrapping", since = "1.7.0")]
-        #[rustc_const_unstable(feature = "const_checked_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_checked_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -591,7 +591,7 @@ macro_rules! int_impl {
         #[doc = concat!("assert_eq!(", stringify!($SelfT), "::MIN.checked_rem_euclid(-1), None);")]
         /// ```
         #[stable(feature = "euclidean_division", since = "1.38.0")]
-        #[rustc_const_unstable(feature = "const_euclidean_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -949,7 +949,7 @@ macro_rules! int_impl {
         /// assert_eq!((-128i8).wrapping_div(-1), -128);
         /// ```
         #[stable(feature = "num_wrapping", since = "1.2.0")]
-        #[rustc_const_unstable(feature = "const_wrapping_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_wrapping_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -977,7 +977,7 @@ macro_rules! int_impl {
         /// assert_eq!((-128i8).wrapping_div_euclid(-1), -128);
         /// ```
         #[stable(feature = "euclidean_division", since = "1.38.0")]
-        #[rustc_const_unstable(feature = "const_euclidean_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -1005,7 +1005,7 @@ macro_rules! int_impl {
         /// assert_eq!((-128i8).wrapping_rem(-1), 0);
         /// ```
         #[stable(feature = "num_wrapping", since = "1.2.0")]
-        #[rustc_const_unstable(feature = "const_wrapping_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_wrapping_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -1032,7 +1032,7 @@ macro_rules! int_impl {
         /// assert_eq!((-128i8).wrapping_rem_euclid(-1), 0);
         /// ```
         #[stable(feature = "euclidean_division", since = "1.38.0")]
-        #[rustc_const_unstable(feature = "const_euclidean_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -1067,7 +1067,7 @@ macro_rules! int_impl {
         ///
         /// Note that this is *not* the same as a rotate-left; the RHS of a wrapping shift-left is restricted to
         /// the range of the type, rather than the bits shifted out of the LHS being returned to the other end.
-        /// The primitive integer types all implement a [`rotate_left`](#method.rotate_left) function,
+        /// The primitive integer types all implement a [`rotate_left`](Self::rotate_left) function,
         /// which may be what you want instead.
         ///
         /// # Examples
@@ -1096,7 +1096,7 @@ macro_rules! int_impl {
         ///
         /// Note that this is *not* the same as a rotate-right; the RHS of a wrapping shift-right is restricted
         /// to the range of the type, rather than the bits shifted out of the LHS being returned to the other
-        /// end. The primitive integer types all implement a [`rotate_right`](#method.rotate_right) function,
+        /// end. The primitive integer types all implement a [`rotate_right`](Self::rotate_right) function,
         /// which may be what you want instead.
         ///
         /// # Examples
@@ -1158,12 +1158,12 @@ macro_rules! int_impl {
         /// Basic usage:
         ///
         /// ```
-        /// #![feature(unsigned_abs)]
         #[doc = concat!("assert_eq!(100", stringify!($SelfT), ".unsigned_abs(), 100", stringify!($UnsignedT), ");")]
         #[doc = concat!("assert_eq!((-100", stringify!($SelfT), ").unsigned_abs(), 100", stringify!($UnsignedT), ");")]
         /// assert_eq!((-128i8).unsigned_abs(), 128u8);
         /// ```
-        #[unstable(feature = "unsigned_abs", issue = "74913")]
+        #[stable(feature = "unsigned_abs", since = "1.51.0")]
+        #[rustc_const_stable(feature = "unsigned_abs", since = "1.51.0")]
         #[inline]
         pub const fn unsigned_abs(self) -> $UnsignedT {
              self.wrapping_abs() as $UnsignedT
@@ -1299,7 +1299,7 @@ macro_rules! int_impl {
         /// ```
         #[inline]
         #[stable(feature = "wrapping", since = "1.7.0")]
-        #[rustc_const_unstable(feature = "const_overflowing_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_overflowing_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         pub const fn overflowing_div(self, rhs: Self) -> (Self, bool) {
@@ -1329,7 +1329,7 @@ macro_rules! int_impl {
         /// ```
         #[inline]
         #[stable(feature = "euclidean_division", since = "1.38.0")]
-        #[rustc_const_unstable(feature = "const_euclidean_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         pub const fn overflowing_div_euclid(self, rhs: Self) -> (Self, bool) {
@@ -1360,7 +1360,7 @@ macro_rules! int_impl {
         /// ```
         #[inline]
         #[stable(feature = "wrapping", since = "1.7.0")]
-        #[rustc_const_unstable(feature = "const_overflowing_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_overflowing_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         pub const fn overflowing_rem(self, rhs: Self) -> (Self, bool) {
@@ -1390,7 +1390,7 @@ macro_rules! int_impl {
         #[doc = concat!("assert_eq!(", stringify!($SelfT), "::MIN.overflowing_rem_euclid(-1), (0, true));")]
         /// ```
         #[stable(feature = "euclidean_division", since = "1.38.0")]
-        #[rustc_const_unstable(feature = "const_euclidean_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -1589,11 +1589,11 @@ macro_rules! int_impl {
 
         /// Calculates the quotient of Euclidean division of `self` by `rhs`.
         ///
-        /// This computes the integer `n` such that `self = n * rhs + self.rem_euclid(rhs)`,
-        /// with `0 <= self.rem_euclid(rhs) < rhs`.
+        /// This computes the integer `q` such that `self = q * rhs + r`, with
+        /// `r = self.rem_euclid(rhs)` and `0 <= r < abs(rhs)`.
         ///
-        /// In other words, the result is `self / rhs` rounded to the integer `n`
-        /// such that `self >= n * rhs`.
+        /// In other words, the result is `self / rhs` rounded to the integer `q`
+        /// such that `self >= q * rhs`.
         /// If `self > 0`, this is equal to round towards zero (the default in Rust);
         /// if `self < 0`, this is equal to round towards +/- infinity.
         ///
@@ -1615,7 +1615,7 @@ macro_rules! int_impl {
         /// assert_eq!((-a).div_euclid(-b), 2); // -7 >= -4 * 2
         /// ```
         #[stable(feature = "euclidean_division", since = "1.38.0")]
-        #[rustc_const_unstable(feature = "const_euclidean_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -1653,7 +1653,7 @@ macro_rules! int_impl {
         /// assert_eq!((-a).rem_euclid(-b), 1);
         /// ```
         #[stable(feature = "euclidean_division", since = "1.38.0")]
-        #[rustc_const_unstable(feature = "const_euclidean_int_methods", issue = "53718")]
+        #[rustc_const_stable(feature = "const_euclidean_int_methods", since = "1.52.0")]
         #[must_use = "this returns the result of the operation, \
                       without modifying the original"]
         #[inline]
@@ -1812,8 +1812,8 @@ macro_rules! int_impl {
         ///
         #[doc = $to_xe_bytes_doc]
         ///
-        /// [`to_be_bytes`]: #method.to_be_bytes
-        /// [`to_le_bytes`]: #method.to_le_bytes
+        /// [`to_be_bytes`]: Self::to_be_bytes
+        /// [`to_le_bytes`]: Self::to_le_bytes
         ///
         /// # Examples
         ///
@@ -1845,7 +1845,7 @@ macro_rules! int_impl {
         ///
         /// [`to_ne_bytes`] should be preferred over this whenever possible.
         ///
-        /// [`to_ne_bytes`]: #method.to_ne_bytes
+        /// [`to_ne_bytes`]: Self::to_ne_bytes
         ///
         /// # Examples
         ///
@@ -1937,8 +1937,8 @@ macro_rules! int_impl {
         /// likely wants to use [`from_be_bytes`] or [`from_le_bytes`], as
         /// appropriate instead.
         ///
-        /// [`from_be_bytes`]: #method.from_be_bytes
-        /// [`from_le_bytes`]: #method.from_le_bytes
+        /// [`from_be_bytes`]: Self::from_be_bytes
+        /// [`from_le_bytes`]: Self::from_le_bytes
         ///
         #[doc = $to_xe_bytes_doc]
         ///
@@ -1975,32 +1975,28 @@ macro_rules! int_impl {
             unsafe { mem::transmute(bytes) }
         }
 
-        /// **This method is soft-deprecated.**
-        ///
-        /// Although using it won’t cause a compilation warning, new code should use
-        #[doc = concat!("[`", stringify!($SelfT), "::MIN", "`](#associatedconstant.MIN)")]
-        /// instead.
+        /// New code should prefer to use
+        #[doc = concat!("[`", stringify!($SelfT), "::MIN", "`] instead.")]
         ///
         /// Returns the smallest value that can be represented by this integer type.
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline(always)]
         #[rustc_promotable]
         #[rustc_const_stable(feature = "const_min_value", since = "1.32.0")]
+        #[rustc_deprecated(since = "TBD", reason = "replaced by the `MIN` associated constant on this type")]
         pub const fn min_value() -> Self {
             Self::MIN
         }
 
-        /// **This method is soft-deprecated.**
-        ///
-        /// Although using it won’t cause a compilation warning, new code should use
-        #[doc = concat!("[`", stringify!($SelfT), "::MAX", "`](#associatedconstant.MAX)")]
-        /// instead.
+        /// New code should prefer to use
+        #[doc = concat!("[`", stringify!($SelfT), "::MAX", "`] instead.")]
         ///
         /// Returns the largest value that can be represented by this integer type.
         #[stable(feature = "rust1", since = "1.0.0")]
         #[inline(always)]
         #[rustc_promotable]
         #[rustc_const_stable(feature = "const_max_value", since = "1.32.0")]
+        #[rustc_deprecated(since = "TBD", reason = "replaced by the `MAX` associated constant on this type")]
         pub const fn max_value() -> Self {
             Self::MAX
         }

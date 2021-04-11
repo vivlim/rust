@@ -5,8 +5,7 @@ macro_rules! int_module {
     ($T:ident, #[$attr:meta]) => (
         #[doc = concat!(
             "The smallest value that can be represented by this integer type. Use ",
-            "[`", stringify!($T), "::MIN", "`](../../std/primitive.", stringify!($T), ".html#associatedconstant.MIN)",
-            " instead.",
+            "[`", stringify!($T), "::MIN", "`] instead."
         )]
         ///
         /// # Examples
@@ -20,12 +19,12 @@ macro_rules! int_module {
         /// ```
         ///
         #[$attr]
+        #[rustc_deprecated(since = "TBD", reason = "replaced by the `MIN` associated constant on this type")]
         pub const MIN: $T = $T::MIN;
 
         #[doc = concat!(
             "The largest value that can be represented by this integer type. Use ",
-            "[`", stringify!($T), "::MAX", "`](../../std/primitive.", stringify!($T), ".html#associatedconstant.MAX)",
-            " instead.",
+            "[`", stringify!($T), "::MAX", "`] instead."
         )]
         ///
         /// # Examples
@@ -39,6 +38,7 @@ macro_rules! int_module {
         /// ```
         ///
         #[$attr]
+        #[rustc_deprecated(since = "TBD", reason = "replaced by the `MAX` associated constant on this type")]
         pub const MAX: $T = $T::MAX;
     )
 }

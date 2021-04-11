@@ -30,15 +30,6 @@ struct DiagnosticBuilderInner<'a> {
     allow_suggestions: bool,
 }
 
-/// This is a helper macro for [`forward!`] that allows automatically adding documentation
-/// that uses tokens from [`forward!`]'s input.
-macro_rules! forward_inner_docs {
-    ($e:expr => $i:item) => {
-        #[doc = $e]
-        $i
-    }
-}
-
 /// In general, the `DiagnosticBuilder` uses deref to allow access to
 /// the fields and methods of the embedded `diagnostic` in a
 /// transparent way. *However,* many of the methods are intended to
@@ -54,11 +45,11 @@ macro_rules! forward {
         pub fn $n:ident(&self, $($name:ident: $ty:ty),* $(,)?) -> &Self
     ) => {
         $(#[$attrs])*
-        forward_inner_docs!(concat!("See [`Diagnostic::", stringify!($n), "()`].") =>
+        #[doc = concat!("See [`Diagnostic::", stringify!($n), "()`].")]
         pub fn $n(&self, $($name: $ty),*) -> &Self {
             self.diagnostic.$n($($name),*);
             self
-        });
+        }
     };
 
     // Forward pattern for &mut self -> &mut Self
@@ -67,29 +58,28 @@ macro_rules! forward {
         pub fn $n:ident(&mut self, $($name:ident: $ty:ty),* $(,)?) -> &mut Self
     ) => {
         $(#[$attrs])*
-        forward_inner_docs!(concat!("See [`Diagnostic::", stringify!($n), "()`].") =>
+        #[doc = concat!("See [`Diagnostic::", stringify!($n), "()`].")]
         pub fn $n(&mut self, $($name: $ty),*) -> &mut Self {
             self.0.diagnostic.$n($($name),*);
             self
-        });
+        }
     };
 
-    // Forward pattern for &mut self -> &mut Self, with S: Into<MultiSpan>
-    // type parameter. No obvious way to make this more generic.
+    // Forward pattern for &mut self -> &mut Self, with generic parameters.
     (
         $(#[$attrs:meta])*
-        pub fn $n:ident<S: Into<MultiSpan>>(
+        pub fn $n:ident<$($generic:ident: $bound:path),*>(
             &mut self,
             $($name:ident: $ty:ty),*
             $(,)?
         ) -> &mut Self
     ) => {
         $(#[$attrs])*
-        forward_inner_docs!(concat!("See [`Diagnostic::", stringify!($n), "()`].") =>
-        pub fn $n<S: Into<MultiSpan>>(&mut self, $($name: $ty),*) -> &mut Self {
+        #[doc = concat!("See [`Diagnostic::", stringify!($n), "()`].")]
+        pub fn $n<$($generic: $bound),*>(&mut self, $($name: $ty),*) -> &mut Self {
             self.0.diagnostic.$n($($name),*);
             self
-        });
+        }
     };
 }
 
@@ -398,6 +388,7 @@ impl<'a> DiagnosticBuilder<'a> {
         self
     }
 
+    forward!(pub fn set_primary_message<M: Into<String>>(&mut self, msg: M) -> &mut Self);
     forward!(pub fn set_span<S: Into<MultiSpan>>(&mut self, sp: S) -> &mut Self);
     forward!(pub fn code(&mut self, s: DiagnosticId) -> &mut Self);
 

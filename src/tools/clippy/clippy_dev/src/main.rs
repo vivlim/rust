@@ -2,7 +2,6 @@
 
 use clap::{App, Arg, ArgMatches, SubCommand};
 use clippy_dev::{bless, fmt, new_lint, ra_setup, serve, stderr_length_check, update_lints};
-
 fn main() {
     let matches = get_clap_config();
 
